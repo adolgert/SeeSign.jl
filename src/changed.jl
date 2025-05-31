@@ -42,12 +42,10 @@ Base.size(arr::StepArray) = size(arr.which)
 Base.length(arr::StepArray) = length(arr.which)
 Base.IndexStyle(::Type{<:StepArray}) = IndexCartesian()
 
-# Additional useful methods
 Base.similar(arr::StepArray) = StepArray(similar(arr.v[:,:,1]))
 Base.similar(arr::StepArray, ::Type{S}) where S = StepArray(similar(arr.v[:,:,1], S))
 Base.similar(arr::StepArray, ::Type{S}, dims::Dims) where S = StepArray(Array{S}(undef, dims))
 
-# Methods to check which values have changed
 """
     changed(arr::StepArray)
 

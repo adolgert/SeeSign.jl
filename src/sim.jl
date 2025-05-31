@@ -6,8 +6,16 @@ using Test
 using CompetingClocks
 
 mutable struct PhysicalState
-    board::SparseMatrixCSC{Int64, Int64}
+    board::StepArray{Int,2}
+    function PhysicalState(board::AbstractArray)
+        sa = StepArray{Int,2}(undef, size(board))
+        copy!(sa, board)
+        accept(sa)
+        new(sa)
+    end
 end
+
+
 
 # They can move in any of four directions.
 @enum Direction Up Left Down Right
