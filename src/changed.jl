@@ -11,29 +11,44 @@ struct StepArray{T,N} <: AbstractArray{T,N}
     # The extra array is a set of integers to point to which of the two
     # arrays is the current one.
     which::Array{Int,N}
+    modified::Vector{CartesianIndex{N}}
 end
 
 
 function StepArray{T,N}(_::UndefInitializer, dims...) where {T,N}
-    return StepArray{T,N}([Array{T,N}(undef, dims...), Array{T,N}(undef, dims...)], ones(Int, dims...))
+    return StepArray{T,N}(
+        [Array{T,N}(undef, dims...), Array{T,N}(undef, dims...)],
+        ones(Int, dims...),
+        CartesianIndex{N}[]
+        )
 end
 
 
 # When a client sets a value, move the index to the other array and add 3.
 function Base.setindex!(arr::StepArray, val, i...)
-    j = arr.which[i...]
-    j <= 2 && (j = 3 - j)
-    arr.which[i...] = j + 3
-    arr.v[j % 3][i...] = val
+    idx = CartesianIndex(i)
+    if idx ∉ arr.modified
+        # First modification - store the original value
+        push!(arr.modified, idx)
+        # Keep the previous value in the other array for history
+        curr_idx = arr.which[i...]
+        other_idx = 3 - curr_idx
+        # Do not modify the previous array if this is the first modification
+        arr.which[i...] = other_idx
+        arr.v[other_idx][i...] = val
+    else
+        # Already modified - just update the current array
+        arr.v[arr.which[i...]][i...] = val
+    end
     return val
 end
 
 
-Base.getindex(arr::StepArray, i...) = arr.v[arr.which[i...] % 3][i...]
+Base.getindex(arr::StepArray, i...) = arr.v[arr.which[i...]][i...]
 
 
 # This function erases the marker that indicates recent changes.
-accept(arr::StepArray) = (arr.which .%= 3; arr)
+accept(arr::StepArray) = (empty!(arr.modified); arr)
 
 # Required AbstractArray interface methods
 Base.size(arr::StepArray) = size(arr.which)
@@ -49,11 +64,8 @@ Base.similar(arr::StepArray, ::Type{S}, dims::Dims) where S = StepArray(Array{S}
 """
     changed(arr::StepArray)
 
-Returns a BitArray indicating which elements have been changed since the last call to accept().
 """
-function changed(arr::StepArray)
-    return arr.which .> 3
-end
+changed(arr::StepArray) = arr.modified
 
 
 """
@@ -63,11 +75,15 @@ Get the previous value at index i before it was changed.
 Returns the current value if the element hasn't been changed.
 """
 function previous_value(arr::StepArray, i...)
-    j = arr.which[i...]
-    if j <= 2
-        return arr.v[j][i...]
+    idx = CartesianIndex(i...)
+    # If this index has been modified, return original value
+    if idx in arr.modified
+        # Current version is in arr.which[i...], previous is in the other slot
+        other_idx = 3 - arr.which[i...]
+        return arr.v[other_idx][i...]
     else
-        return arr.v[3 - (j % 3)][i...]
+        # Not modified, so both versions are the same
+        return arr.v[arr.which[i...]][i...]
     end
 end
 

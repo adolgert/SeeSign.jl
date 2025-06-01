@@ -27,7 +27,7 @@ using SeeSign
         accept(step_arr)
         
         # Initially, nothing should be changed
-        @test !any(changed(step_arr))
+        @test isempty(changed(step_arr))
         
         # Modify some elements
         step_arr[1] = 100  # Change first element
@@ -36,11 +36,9 @@ using SeeSign
         
         # Check that modified elements are detected
         changes = changed(step_arr)
-        @test changes[1] == true   # Element 1 was changed
-        @test changes[2] == false  # Element 2 was not changed
-        @test changes[3] == true   # Element 3 was changed
-        @test changes[4] == false  # Element 4 was not changed
-        @test changes[5] == false  # Element 5 was not changed
+        @test length(changes) == 2
+        @test CartesianIndex(1) in changes
+        @test CartesianIndex(3) in changes
         
         # Check that new values are correct
         @test step_arr[1] == 100
@@ -64,13 +62,13 @@ using SeeSign
         
         # Modify an element
         step_arr[2] = 99
-        @test changed(step_arr)[2] == true
+        @test CartesianIndex(2) ∈ changed(step_arr)
         
         # Accept changes
         accept(step_arr)
         
         # After accept, nothing should be marked as changed
-        @test !any(changed(step_arr))
+        @test isempty(changed(step_arr))
         
         # But the new value should still be there
         @test step_arr[2] == 99
@@ -93,12 +91,9 @@ using SeeSign
         
         # Check changes
         changes = changed(step_arr)
-        @test changes[1, 1] == false
-        @test changes[1, 2] == true   # Modified
-        @test changes[1, 3] == false
-        @test changes[2, 1] == true   # Modified
-        @test changes[2, 2] == false
-        @test changes[2, 3] == false
+        @test length(changes) == 2
+        @test CartesianIndex(1, 2) in changes
+        @test CartesianIndex(2, 1) in changes
         
         # Check values
         @test step_arr[1, 2] == 99
@@ -138,11 +133,11 @@ using SeeSign
         # Modify the same element multiple times
         step_arr[1] = 100
         @test step_arr[1] == 100
-        @test changed(step_arr)[1] == true
+        @test CartesianIndex(1) in changed(step_arr)
         
         step_arr[1] = 200
         @test step_arr[1] == 200
-        @test changed(step_arr)[1] == true  # Still marked as changed
+        @test CartesianIndex(1) in changed(step_arr)
         
         # The previous value should still be the original
         @test previous_value(step_arr, 1) == 1
