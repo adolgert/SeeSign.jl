@@ -24,6 +24,14 @@ function StepArray{T,N}(_::UndefInitializer, dims...) where {T,N}
 end
 
 
+function StepArray(arr::AbstractArray{T,N}) where {T,N}
+    sa = StepArray{T,N}(undef, size(arr))
+    copy!(sa, arr)
+    accept(sa)  # Accept initial state
+    return sa
+end
+
+
 # When a client sets a value, move the index to the other array and add 3.
 function Base.setindex!(arr::StepArray, val, i...)
     idx = CartesianIndex(i)
