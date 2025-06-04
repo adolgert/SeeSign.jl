@@ -41,7 +41,6 @@ mutable struct PhysicalState
 end
 
 
-
 """
 Whether two individuals are adjacent.
 """
@@ -90,6 +89,8 @@ abstract type BoardTransition end
 A dynamic generator of events. This looks at a changed place in the 
 physical state and generates clock keys for events that could
 depend on that place.
+
+@when agentat(loc) && available(loc+direction) => (:move, loc, direction)
 """
 function move_generate_event(physical, place)
     create = ClockKey[]
@@ -296,6 +297,7 @@ function deal_with_changes(sim::SimulationFSM)
         union!(create_events, move_generate_event(physical, place))
         union!(create_events, health_generate_event(physical, place))
     end
+    # Don't enable an event that is already enabled.
     setdiff!(create_events, keys(enabled_events))
     for clock_key in create_events
         mt = MoveTransition(clock_key...)
