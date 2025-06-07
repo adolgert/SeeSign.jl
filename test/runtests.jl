@@ -5,4 +5,5 @@ using Test
     include("test_parse.jl")
     include("test_changed.jl")
     include("test_indexmath.jl")
+    include("test_tracked.jl")
 end
