@@ -21,23 +21,54 @@ const DirectionOpposite = Dict(
 @enum Health NoHealth Healthy Sick Dead
 @enum HealthEvent NoEvent Infect Recover Die
 
-const PlaceKey = Tuple{Symbol,CartesianIndex{2}}
+const PlaceKey = Tuple
 # The last element is an int here but can be a direction.
-const ClockKey = Tuple{Int,CartesianIndex{2},Int}
+const ClockKey = Tuple
 export run
+
+@tracked_struct Square begin
+    occupant::Int
+    resistance::Float64
+end
+
+@tracked_struct Agent begin
+    health::Health
+    loc::CartesianIndex{2}
+    birthtime::Float64
+end
+
 
 # There are agents located on a 2D board.
 # The state is a checkerboard. Each plaquette in the checkerboard
 # is 0 or contains an individual identified by an integer.
 # An individual has a health state.
 mutable struct PhysicalState
-    board::StepArray{Int,2}
-    health::StepArray{Health,1}
-    loc::Vector{CartesianIndex{2}}
-    function PhysicalState(board::AbstractArray, health)
-        loc = findall(x -> x != 0, board)
-        new(StepArray(board), StepArray(health), loc)
+    board::TrackedVector{Square}
+    agent::TrackedVector{Agent}
+    # The tracked_vector is 1D but the board is 2D so we have to save conversion.
+    board_dim::CartesianIndices{2, Tuple{Base.OneTo{Int64}, Base.OneTo{Int64}}}
+
+    function PhysicalState(board::AbstractArray)
+        linboard = TrackedVector{Square}(undef, length(board))
+        for (i, val) in enumerate(board)
+            linboard[i] = Square(val, 1.0)
+        end
+        location = findall(x -> x != 0, board)
+        agent = TrackedVector{Agent}(undef, length(loc))
+        for (i, loc) in enumerate(location)
+            agent[i] = Agent(Healthy, loc, 0.0)
+        end
+        new(linboard, location, CartesianIndices(board))
     end
+end
+
+
+function move_in_direction(physical, agent, direction)
+    oldboardidx = physical.board_dim[physical.loc[agent]]
+    physical.loc[agent] += DirectionDelta[direction]
+    newboardidx = physical.board_dim[physical.loc[agent]]
+    physical.board[oldboardidx].occupant = 0
+    physical.board[newboardidx].occupant = agent
 end
 
 
@@ -60,14 +91,36 @@ A place for this state is a tuple of a symbol and the Cartesian index.
 The symbol is the name of the array within the PhysicalState.
 """
 function changed(physical::PhysicalState)
-    places = Tuple{Symbol,CartesianIndex}[]
-    for field in [f for f in fieldnames(physical) if isa(f, StepArray)]
-        board = getproperty(physical, field)
-        for ij in findall(x -> x, changed(board))
-            push!(places, (field, ij))
-        end
+    places = Set{Tuple}()
+    for field in [f for f in fieldnames(physical) if isa(f, TrackedVector)]
+        union!(places, changed(getproperty(physical, field)))
     end
     return places
+end
+
+"""
+Return a list of changed places in the physical state.
+A place for this state is a tuple of a symbol and the Cartesian index.
+The symbol is the name of the array within the PhysicalState.
+"""
+function wasread(physical::PhysicalState)
+    places = Set{Tuple}()
+    for field in [f for f in fieldnames(physical) if isa(f, TrackedVector)]
+        union!(places, gotten(getproperty(physical, field)))
+    end
+    return places
+end
+
+"""
+Return a list of changed places in the physical state.
+A place for this state is a tuple of a symbol and the Cartesian index.
+The symbol is the name of the array within the PhysicalState.
+"""
+function resetread(physical::PhysicalState)
+    for field in [f for f in fieldnames(physical) if isa(f, TrackedVector)]
+        reset_gotten!(getproperty(physical, field))
+    end
+    return physical
 end
 
 
@@ -77,10 +130,45 @@ This function erases the record of modifications.
 """
 function accept(physical::PhysicalState)
     for field in [f for f in fieldnames(physical) if isa(f, StepArray)]
-        accept(getproperty(physical, field))
+        reset_tracking!(getproperty(physical, field))
     end
     return physical
 end
+
+#######
+"""
+This type will be used by a macro called `@react` to generate events.
+```
+@react tomove board[loc] begin
+    @generate direction = keys(DirectionDelta)
+    @if begin
+        agent = board[loc]
+        agent > 0 &&
+        board[loc + direction] == 0 &&
+        checkbounds(board, loc + direction)
+    end
+    @action MoveTransition(agent, direction)
+end
+```
+I can think of another version of this:
+```
+@react tomove begin
+    @match board[loc].occupant
+    @generate [
+        (:MoveTransition, board[loc], direction)
+        for direction in keys(DirectionDelta)
+        ]
+    end
+    @if (event, agent, direction) begin
+        agent > 0 &&
+        board[loc + direction] == 0 &&
+        checkbounds(board, loc + direction)
+    end
+end
+```
+
+"""
+
 
 ####### transitions
 abstract type BoardTransition end
@@ -91,50 +179,116 @@ physical state and generates clock keys for events that could
 depend on that place.
 
 @when agentat(loc) && available(loc+direction) => (:move, loc, direction)
+
 """
-function move_generate_event(physical, place)
-    create = ClockKey[]
-    array_name, location = place
-    board = getproperty(physical, array_name)
-    agent = board[location]
-    if agent == 0
-        for (direction, move) in DirectionDelta
-            neighbor_loc = location + move
-            neighbor = board[neighbor_loc]
-            if neighbor != 0
-                push!(create, (neighbor, neighbor_loc, DirectionOpposite[direction]))
-            end
-        end
+
+function move_match_place(place_key)
+    array_name, index_value, struct_value... = place_key
+    # We don't match struct_value here, but we could.
+    if array_name == :board
+        return index_value
     else
-        return [(agent, location, Int(direction)) for direction in keys(DirectionDelta)]
+        return nothing
     end
-    return create
+end
+
+
+function tomove_enabled(physical, event_key)
+    board = getproperty(physical, :board)
+    health = getproperty(physical, :health)
+
+    sym_should_enable = begin
+        agent = board[loc]
+        agent > 0 &&
+            board[loc + direction] == 0 &&
+            checkbounds(board, loc + direction)
+    end
+end
+
+
+function tomove_generate_event(physical, place)
+    # Select based on the place key.
+    array_name, index_value, struct_value... = place_key
+    # We don't match struct_value here, but we could.
+    if array_name != :board
+        return nothing
+    end
+    loc = index_value
+
+    # Turn every StepArray from the physical into a local variable.
+    board = getproperty(physical, :board)
+    health = getproperty(physical, :health)
+
+    # Not sure where to define this type BoardTransition.
+    sym_create = BoardTransition[]
+    sym_depends = Set{PlaceKey}[]
+
+    # Create the set of generative elements. We will do a for-loop over
+    # these, but we need to insert code into the for-loop.
+    sym_generated = [
+        (:MoveTransition, board[loc], direction)
+        for direction in keys(DirectionDelta)
+        ]
+    for sym_generate in sym_generated
+        # Inserted code at beginning.
+        clear_reads(physical)
+
+        # Now comes the code block.
+        (event, agent, direction) = sym_generate
+        sym_should_enable = begin
+            agent > 0 &&
+                board[loc + direction] == 0 &&
+                checkbounds(board, loc + direction)
+        end
+
+        # Inserted code at ending.
+        if sym_should_enable
+            input_places = places_gotten(physical)
+            
+            # This constructor call comes from the @action macro.
+            transition = MoveTransition(agent, direction)
+
+            # Then back to the inserted code.
+            push!(sym_create, transition)
+            push!(sym_depends, input_places)
+        end
+    end
+    if isempty(sym_create)
+        return nothing
+    else
+        return sym_create, sym_depends
+    end
 end
 
 
 struct MoveTransition <: BoardTransition
     who::Int
-    location::CartesianIndex{2}
     direction::Direction
 end
 
 
-clock_key(mt::MoveTransition) = ClockKey(mt.who, mt.location, mt.direction)
-
-
-function check_places(physical, tn::MoveTransition)
-    return PlaceKey[(:board, tn.location), (:board, tn.location + tn.direction)]
-end
+clock_key(mt::MoveTransition) = ClockKey(:MoveTransition, mt.who, mt.direction)
 
 
 function enable(tn::MoveTransition, sampler, physical, when, rng)
-    should = checkbounds(physical.board, tn.location + tn.direction) &&
-        physical.board[tn.location] == tn.who &&
-        physical.board[tn.location + tn.direction] == 0
-    if should
-        enable!(sampler, clock_key(tn), Weibull(1.0), when, when, rng)
+    enable!(sampler, clock_key(tn), Weibull(1.0), when, when, rng)
+    return nothing
+end
+
+
+# This is generated by the macro, as well.
+function disable(tn::MoveTransition, physical)
+    # Turn every StepArray from the physical into a local variable.
+    board = getproperty(physical, :board)
+    health = getproperty(physical, :health)
+
+    (event, agent, direction) = clock_key(tn)
+    sym_should_enable = begin
+        agent > 0 &&
+            board[loc + direction] == 0 &&
+            checkbounds(board, loc + direction)
     end
-    return should
+    return !sym_should_enable
 end
 
 
@@ -143,18 +297,9 @@ function modify(tn::MoveTransition, physical)
 end
 
 
-# A transition from enabled -> disabled.
-function bdisable(tn::MoveTransition, physical)
-    return physical.board[tn.location + tn.direction] != 0
-end
-
-
 # Firing also transitions enabled -> disabled.
 function fire!(tn::MoveTransition, physical)
-    physical.board[tn.location] = 0
-    newloc = tn.location + tn.direction
-    physical.board[newloc] = tn.who
-    physical.loc[tn.who] = newloc
+    move_in_direction(physical, tn.who, tn.direction)
     return nothing
 end
 
@@ -166,7 +311,8 @@ struct InfectTransition <: BoardTransition
 end
 
 
-clock_key(mt::InfectTransition) = ClockKey(mt.source, CartesianIndex(mt.target, 0), mt.health)
+clock_key(mt::InfectTransition) = ClockKey(:InfectTransition, mt.source, mt.target, mt.health)
+
 
 function health_generate_event(physical, place)
     create = ClockKey[]
@@ -244,7 +390,8 @@ mutable struct SimulationFSM{Sampler}
     when::Float64
     rng::Xoshiro
     enabled_events::Dict{ClockKey,BoardTransition}
-    listen_places::Dict{PlaceKey,ClockKey}
+    listen_places::Dict{PlaceKey,Set{ClockKey}}
+    event_enablers::Dict{ClockKey,Set{PlaceKey}}
 end
 
 
@@ -273,6 +420,7 @@ function remove_event!(sim::SimulationFSM, clock_key::ClockKey)
     end
 end
 
+
 """
     deal_with_changes(sim::SimulationFSM)
 
@@ -280,7 +428,10 @@ An event changed the state. This function modifies events
 to respond to changes in state.
 """
 function deal_with_changes(sim::SimulationFSM)
+    # The first job of this function is to create new events.
     create_events = Set{ClockKey}()
+    # When it creates events, it also records the enabling rule for each event.
+    # An enabling rule is an invariant defined on a set of places.
     for place in changed(sim.physical)
         # Each event recorded which places affect that event.
         if place ∈ keys(listen_places)
