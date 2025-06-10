@@ -139,34 +139,18 @@ end
 """
 This type will be used by a macro called `@react` to generate events.
 ```
-@react tomove board[loc] begin
-    @generate direction = keys(DirectionDelta)
+@react tomove(physical) begin
+    @match changed(physical.board[loc].occupant)
+    @generate direction ∈ keys(DirectionDelta)
     @if begin
-        agent = board[loc]
+        agent = physical.board[loc].occupant
         agent > 0 &&
-        board[loc + direction] == 0 &&
-        checkbounds(board, loc + direction)
+        physical.board[loc + direction] == 0 &&
+        checkbounds(physical.board, loc + direction)
     end
     @action MoveTransition(agent, direction)
 end
 ```
-I can think of another version of this:
-```
-@react tomove begin
-    @match board[loc].occupant
-    @generate [
-        (:MoveTransition, board[loc], direction)
-        for direction in keys(DirectionDelta)
-        ]
-    end
-    @if (event, agent, direction) begin
-        agent > 0 &&
-        board[loc + direction] == 0 &&
-        checkbounds(board, loc + direction)
-    end
-end
-```
-
 """
 
 
@@ -208,37 +192,31 @@ end
 
 function tomove_generate_event(physical, place)
     # Select based on the place key.
-    array_name, index_value, struct_value... = place_key
-    # We don't match struct_value here, but we could.
-    if array_name != :board
+    sym_array_name, sym_index_value, sym_struct_value... = place_key
+    if sym_array_name != :board || sym_struct_value != (:occupant,)
         return nothing
     end
-    loc = index_value
-
-    # Turn every StepArray from the physical into a local variable.
-    board = getproperty(physical, :board)
-    health = getproperty(physical, :health)
+    # loc comes from matching the place key.
+    loc = sym_index_value
 
     # Not sure where to define this type BoardTransition.
     sym_create = BoardTransition[]
     sym_depends = Set{PlaceKey}[]
+    sym_enabled = Function[]
 
     # Create the set of generative elements. We will do a for-loop over
     # these, but we need to insert code into the for-loop.
-    sym_generated = [
-        (:MoveTransition, board[loc], direction)
-        for direction in keys(DirectionDelta)
-        ]
-    for sym_generate in sym_generated
+    # The top of the for-loop comes from the @generate macro.
+    for direction in keys(DirectionDelta)
         # Inserted code at beginning.
         clear_reads(physical)
 
-        # Now comes the code block.
-        (event, agent, direction) = sym_generate
+        # Now comes the code block from @if.
         sym_should_enable = begin
+            agent = physical.board[loc].occupant
             agent > 0 &&
-                board[loc + direction] == 0 &&
-                checkbounds(board, loc + direction)
+                physical.board[loc + direction].occupant == 0 &&
+                checkbounds(physical.board, loc + direction)
         end
 
         # Inserted code at ending.
@@ -249,8 +227,21 @@ function tomove_generate_event(physical, place)
             transition = MoveTransition(agent, direction)
 
             # Then back to the inserted code.
+            # The point of this is to make a new transition.
             push!(sym_create, transition)
+            # That transition depends on the input places just read during @if.
             push!(sym_depends, input_places)
+            # And we need to be able to disable the transition if
+            # the @if condition is no longer true, so save that function.
+            push!(sym_enabled, function(physical)
+                # This will capture place and the generated variables.
+                (event, agent, direction) = sym_generate
+                sym_should_enable = begin
+                    agent > 0 &&
+                        physical.board[loc + direction] == 0 &&
+                        checkbounds(physical.board, loc + direction)
+                end
+            end)
         end
     end
     if isempty(sym_create)
