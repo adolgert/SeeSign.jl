@@ -38,6 +38,7 @@ end
     birthtime::Float64
 end
 
+const BoardIndices = CartesianIndices{2, Tuple{Base.OneTo{Int64}, Base.OneTo{Int64}}}
 
 # There are agents located on a 2D board.
 # The state is a checkerboard. Each plaquette in the checkerboard
@@ -47,7 +48,7 @@ mutable struct PhysicalState
     board::TrackedVector{Square}
     agent::TrackedVector{Agent}
     # The tracked_vector is 1D but the board is 2D so we have to save conversion.
-    board_dim::CartesianIndices{2, Tuple{Base.OneTo{Int64}, Base.OneTo{Int64}}}
+    board_dim::BoardIndices
 
     function PhysicalState(board::AbstractArray)
         linboard = TrackedVector{Square}(undef, length(board))
@@ -78,9 +79,13 @@ end
 
 
 function move_agent(physical, agentidx, destination)
-    physical.board[physical.agent[agentidx].loc].occupant = 0
+    old_loc = physical.agent[agentidx].loc
+    old_board_idx = LinearIndices(physical.board_dim)[old_loc]
+    new_board_idx = LinearIndices(physical.board_dim)[destination]
+    
+    physical.board[old_board_idx].occupant = 0
     physical.agent[agentidx].loc = destination
-    physical.board[destination].occupant = agentidx
+    physical.board[new_board_idx].occupant = agentidx
 end
 
 
@@ -97,7 +102,7 @@ The symbol is the name of the array within the PhysicalState.
 """
 function changed(physical::PhysicalState)
     places = Set{Tuple}()
-    over_tracked(physical) do (fieldname, member)
+    over_tracked(physical) do fieldname, member
         union!(places, [(fieldname, key...) for key in changed(member)])
     end
     return places
@@ -111,7 +116,7 @@ The symbol is the name of the array within the PhysicalState.
 """
 function wasread(physical::PhysicalState)
     places = Set{Tuple}()
-    over_tracked(physical) do (fieldname, member)
+    over_tracked(physical) do fieldname, member
         union!(places, [(fieldname, key...) for key in gotten(member)])
     end
     return places
@@ -123,7 +128,7 @@ A place for this state is a tuple of a symbol and the Cartesian index.
 The symbol is the name of the array within the PhysicalState.
 """
 function resetread(physical::PhysicalState)
-    over_tracked(physical) do (_, member)
+    over_tracked(physical) do _, member
         reset_gotten!(member)
     end
     return physical
@@ -135,7 +140,7 @@ The arrays in a PhysicalState record that they have been modified.
 This function erases the record of modifications.
 """
 function accept(physical::PhysicalState)
-    over_tracked(physical) do (_, member)
+    over_tracked(physical) do _, member
         reset_tracking!(member)
     end
     return physical
@@ -178,7 +183,8 @@ function tomove_generate_event(physical, place_key, existing_events)
         return nothing
     end
     # loc comes from matching the place key.
-    loc = sym_index_value
+    loc_linear = sym_index_value
+    loc_cartesian = physical.board_dim[loc_linear]
 
     # Not sure where to define this type BoardTransition.
     sym_create = BoardTransition[]
@@ -194,10 +200,15 @@ function tomove_generate_event(physical, place_key, existing_events)
 
         # Now comes the code block from @if.
         sym_should_enable = begin
-            agent = physical.board[loc].occupant
-            agent > 0 &&
-                physical.board[loc + direction].occupant == 0 &&
-                checkbounds(physical.board, loc + direction)
+            agent = physical.board[loc_linear].occupant
+            new_loc = loc_cartesian + DirectionDelta[direction]
+            if checkbounds(Bool, physical.board_dim, new_loc)
+                new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
+                agent > 0 &&
+                  physical.board[new_loc_linear].occupant == 0
+            else
+                false
+            end
         end
 
         # Inserted code at ending.
@@ -215,15 +226,25 @@ function tomove_generate_event(physical, place_key, existing_events)
             push!(sym_depends, input_places)
             # And we need to be able to disable the transition if
             # the @if condition is no longer true, so save that function.
-            push!(sym_enabled, function(physical)
-                # This will capture place and the generated variables.
-                sym_should_enable = begin
-                    agent = physical.board[loc].occupant
-                    agent > 0 &&
-                        physical.board[loc + direction].occupant == 0 &&
-                        checkbounds(physical.board, loc + direction)
-                end
-            end)
+            # Capture the current values in the closure
+            let loc_linear_capture = loc_linear, direction_capture = direction
+                push!(sym_enabled, function(physical)
+                    # This will capture place and the generated variables.
+                    loc_cartesian_capture = physical.board_dim[loc_linear_capture]
+                    sym_should_enable = begin
+                        agent = physical.board[loc_linear_capture].occupant
+                        new_loc = loc_cartesian_capture + DirectionDelta[direction_capture]
+                        if checkbounds(Bool, physical.board_dim, new_loc)
+                            new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
+                            agent > 0 &&
+                                physical.board[new_loc_linear].occupant == 0
+                        else
+                            false
+                        end
+                    end
+                    return sym_should_enable
+                end)
+            end
         end
     end
     if isempty(sym_create)
@@ -240,7 +261,7 @@ struct MoveTransition <: BoardTransition
 end
 
 
-clock_key(mt::MoveTransition) = ClockKey(:MoveTransition, mt.who, mt.direction)
+clock_key(mt::MoveTransition) = ClockKey((:MoveTransition, mt.who, mt.direction))
 
 
 function enable(tn::MoveTransition, sampler, physical, when, rng)
@@ -361,7 +382,8 @@ function run(event_count)
         (when, what) = next(sim.sampler, sim.when, sim.rng)
         if isfinite(when) && !isnothing(what)
             sim.when = when
-            fire!(sim.physical, what)
+            whatevent = sim.enabled_events[what]
+            fire!(whatevent, sim.physical)
             remove_event!(sim, what)
             deal_with_changes(sim)
         end
@@ -371,9 +393,11 @@ end
 
 function initialize!(physical::PhysicalState, individuals::Int, rng)
     for ind_idx in 1:individuals
-        loc = rand(rng, PhysicalState.board_dim)
-        while physical.board[loc] != 0
-            loc = rand(rng, PhysicalState.board_dim)
+        loc = rand(rng, physical.board_dim)
+        board_idx = LinearIndices(physical.board_dim)[loc]
+        while physical.board[board_idx].occupant != 0
+            loc = rand(rng, physical.board_dim)
+            board_idx = LinearIndices(physical.board_dim)[loc]
         end
         move_agent(physical, ind_idx, loc)
     end
