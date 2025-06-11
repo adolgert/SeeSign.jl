@@ -32,6 +32,7 @@ export run
     resistance::Float64
 end
 
+
 @tracked_struct Agent begin
     health::Health
     loc::CartesianIndex{2}
@@ -62,6 +63,29 @@ mutable struct PhysicalState
         end
         new(linboard, agent, CartesianIndices(board))
     end
+end
+
+
+function isconsistent(physical::PhysicalState)
+    # Check that the board is consistent with the agents.
+    seen_agents = Set{Int}()
+    for square in eachindex(physical.board)
+        if physical.board[square].occupant != 0
+            agent_idx = physical.board[square].occupant
+            if agent_idx in seen_agents
+                @error "Inconsistent board: square $square has occupant $agent_idx but it was already seen"
+                return false
+            end
+            push!(seen_agents, agent_idx)
+            agent_loc = physical.agent[agent_idx].loc
+            if agent_loc != physical.board_dim[square]
+                @error "Inconsistent board: square $square has occupant $agent_idx at location $agent_loc but should be at $(physical.board_dim[square])"
+                return false
+            end
+        end
+    end
+    @assert seen_agents == Set(1:length(physical.agent))
+    return true
 end
 
 
@@ -306,6 +330,30 @@ function SimulationFSM(physical, sampler, seed)
     )
 end
 
+
+function isconsistent(sim::SimulationFSM)
+    isconsistent(sim.physical) || return false
+    # enabled_events has all events by their keys.
+    for clock_key in keys(sim.enabled_events)
+        # It must have an entry in the functions.
+        @assert clock_key in keys(sim.event_enabled) "Event $clock_key is not enabled"
+        # It must have an entry in the enablers.
+        @assert clock_key in keys(sim.event_enablers) "Event $clock_key is not enabled"
+        places = sim.event_enablers[clock_key]
+        for place in places
+            @assert place in keys(sim.listen_places) "Event $clock_key depends on place $place but it is not being listened to"
+            @assert clock_key in sim.listen_places[place] "Event $clock_key depends on place $place but it is not being listened to"
+        end
+    end
+    for (place, listeners) in sim.listen_places
+        for clock_key in listeners
+            @assert place in sim.event_enablers[clock_key] "Place $place is being listened to by $clock_key but it is not an enabler of that event"
+        end
+    end
+    return true
+end
+
+
 """
     deal_with_changes(sim::SimulationFSM)
 
@@ -377,7 +425,9 @@ function run(event_count)
         2947223
     )
     initialize!(sim.physical, agent_cnt, sim.rng)
+    @assert isconsistent(sim.physical) "The initial physical state is inconsistent"
     deal_with_changes(sim)
+    @assert isconsistent(sim)
     for i in 1:event_count
         (when, what) = next(sim.sampler, sim.when, sim.rng)
         if isfinite(when) && !isnothing(what)
@@ -386,6 +436,7 @@ function run(event_count)
             fire!(whatevent, sim.physical)
             remove_event!(sim, what)
             deal_with_changes(sim)
+            @assert isconsistent(sim)
         end
     end
 end
