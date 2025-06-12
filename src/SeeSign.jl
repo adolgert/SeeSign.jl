@@ -7,6 +7,6 @@ include("depnet.jl")
 include("framework.jl")
 include("sim.jl")
 
-export StepArray, changed, previous_value, accept
+export StepArray, changed, previous_value, accept, @react
 
 end
