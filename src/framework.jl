@@ -155,5 +155,8 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     end
     accept(sim.physical)
     remove_event!(sim.depnet, clock_toremove)
-    delete!.(Ref(sim.enabled_events), clock_toremove)
+    for clock_done in clock_toremove
+        delete!(sim.enabled_events, clock_done)
+        disable!(sim.sampler, clock_done, sim.when)
+    end
 end
