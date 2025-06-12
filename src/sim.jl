@@ -2,6 +2,8 @@ import Base
 using Distributions
 using Logging
 
+# This will simulate agents moving on a board and infecting each other.
+
 export DirectionDelta, DirectionOpposite
 
 # They can move in any of four directions.
@@ -16,6 +18,7 @@ const DirectionOpposite = Dict(
     Up => Down, Down => Up, Left => Right, Right => Left
 )
 
+# They have health states.
 @enum Health NoHealth Healthy Sick Dead
 @enum HealthEvent NoEvent Infect Recover Die
 
@@ -24,12 +27,16 @@ const PlaceKey = Tuple
 const ClockKey = Tuple
 export run
 
+# This is a square on the board.
+# The @tracked macro will let us see changes to the fields
+# so we can update the bipartite graph of Places and Transitions.
 @tracked_struct Square begin
     occupant::Int
     resistance::Float64
 end
 
 
+# Everything we know about an agent.
 @tracked_struct Agent begin
     health::Health
     loc::CartesianIndex{2}
@@ -37,6 +44,10 @@ end
 end
 
 export ascii_to_array
+
+"""
+For testing, convert an ASCII image of a board into a 2D array of integers.
+"""
 function ascii_to_array(ascii_image::String)::Array{Int,2}
     lines = split(strip(ascii_image), '\n')
     rows = length(lines)
@@ -79,7 +90,9 @@ mutable struct BoardState <: PhysicalState
     end
 end
 
-
+"""
+Pretty print the board state.
+"""
 function Base.show(io::IO, state::BoardState)
     println(io, "BoardState")
     infected = [
@@ -98,6 +111,9 @@ function Base.show(io::IO, state::BoardState)
 end
 
 
+"""
+Double-check the board state.
+"""
 function isconsistent(physical::BoardState)
     # Check that the board is consistent with the agents.
     seen_agents = Set{Int}()
@@ -121,6 +137,10 @@ function isconsistent(physical::BoardState)
 end
 
 
+"""
+Because the array of board squares is 1D but the board is 2D, there is translation
+when you move an agent.
+"""
 function move_agent(physical, agentidx, destination)
     old_loc = physical.agent[agentidx].loc
     old_board_idx = LinearIndices(physical.board_dim)[old_loc]
@@ -201,6 +221,11 @@ end
 clock_key(mt::MoveTransition) = ClockKey((:MoveTransition, mt.who, mt.direction))
 
 
+"""
+This function decides the rate of the transition, but whether the transition
+is enabled was already decided by the @condition in the macro. That same
+@condition will be used to disable the transition.
+"""
 function enable(tn::MoveTransition, sampler, physical, when, rng)
     enable!(sampler, clock_key(tn), Weibull(1.0), when, when, rng)
     return nothing
@@ -214,6 +239,9 @@ function fire!(tn::MoveTransition, physical)
 end
 
 
+"""
+For debugging, list every allowed movement transition.
+"""
 function allowed_moves(physical)
     moves = Vector{ClockKey}()
     for agent_idx in eachindex(physical.agent)
@@ -234,6 +262,13 @@ function allowed_moves(physical)
 end
 
 
+"""
+I found writing the @condition macro to be complicated, so I wrote a helper
+function. The trick with the @condition macro is that it will run inside
+a begin-end block, so there is no way to short-circuit the evalutation. You can
+write code like that, but it gets complicated. This macro uses short-cicuiting
+to make it easier.
+"""
 function sick_movement(physical, who_agent, direction)
     who_health = physical.agent[who_agent].health
     neighbor_cart_loc = physical.agent[who_agent].loc + DirectionDelta[direction]
@@ -339,6 +374,9 @@ function initialize!(physical::PhysicalState, individuals::Int, rng)
 end
 
 
+"""
+For debugging, look at every allowed infection.
+"""
 function allowed_infects(physical)
     infects = Vector{ClockKey}()
     for agent_idx in eachindex(physical.agent)
@@ -360,6 +398,9 @@ function allowed_infects(physical)
 end
 
 
+"""
+More debugging, check that all events are correct.
+"""
 function check_events(sim)
     moves = allowed_moves(sim.physical)
     infects = allowed_infects(sim.physical)
