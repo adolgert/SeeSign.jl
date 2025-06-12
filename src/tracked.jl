@@ -2,6 +2,16 @@
 This module provides tools for tracking access to and changes of data structures.
 It includes a macro for creating structs that track access and a vector type that
 tracks changes to its elements.
+
+There are two approaches to tracking changes to elements of a vector.
+
+ 1. Each element of the vector contains a pointer to the owning vector
+    and notifies it when there was a change.
+
+ 2. The vector trackes which elements were read and, when asked what
+    changed, checkes each element that was read to see if it was also
+    modified.
+    
 """
 
 using MacroTools
@@ -39,24 +49,21 @@ macro tracked_struct(typename, body)
             $(fields...)
             _container::Union{Nothing, Any}
             _index::Union{Nothing, Int}
+            _gotten::Set{Symbol}
+            _changed::Set{Symbol}
             
             function $(esc(typename))($(map(esc, fieldnames)...))
-                return new($(map(esc, fieldnames)...), nothing, nothing)
+                return new($(map(esc, fieldnames)...), nothing, nothing, Set{Symbol}(), Set{Symbol}())
             end
         end
     end
     
     getprop_def = quote
         function Base.getproperty(obj::$(esc(typename)), field::Symbol)
-            if field == :_container || field == :_index
+            if field in (:_container, :_index, :_gotten, :_changed)
                 return getfield(obj, field)
             else
-                # Notify container about access if available
-                container = getfield(obj, :_container)
-                index = getfield(obj, :_index)
-                if container !== nothing && index !== nothing
-                    push!(getfield(container, :_gotten), (index, field))
-                end
+                push!(getfield(obj, :_gotten), field)
                 return getfield(obj, field)
             end
         end
@@ -64,15 +71,10 @@ macro tracked_struct(typename, body)
     
     setprop_def = quote
         function Base.setproperty!(obj::$(esc(typename)), field::Symbol, value)
-            if field == :_container || field == :_index
+            if field in (:_container, :_index, :_gotten, :_changed)
                 setfield!(obj, field, value)
             else
-                # Notify container about change if available
-                container = getfield(obj, :_container)
-                index = getfield(obj, :_index)
-                if container !== nothing && index !== nothing
-                    push!(getfield(container, :_changed), (index, field))
-                end
+                push!(getfield(obj, :_changed), field)
                 setfield!(obj, field, value)
             end
         end
@@ -83,13 +85,13 @@ macro tracked_struct(typename, body)
             if private
                 return fieldnames($(esc(typename)))
             else
-                return $(map(QuoteNode, fieldnames))
+                return $(fieldnames)
             end
         end
     end
     
-    # Define equality comparison properly
-    field_comparisons = [:(getfield(a, $(QuoteNode(fname))) == getfield(b, $(QuoteNode(fname)))) for fname in fieldnames]
+    # Define equality comparison properly  
+    field_comparisons = [:(getproperty(a, $(QuoteNode(fname))) == getproperty(b, $(QuoteNode(fname)))) for fname in fieldnames]
     eq_expr = Expr(:&&, field_comparisons...)
     
     eq_def = quote
@@ -114,30 +116,31 @@ A vector that tracks access and changes to its elements.
 """
 struct TrackedVector{T} <: AbstractVector{T}
     data::Vector{T}
-    _gotten::Set{Tuple}
-    _changed::Set{Tuple}
+    _accessed::Set{Int}
     
     function TrackedVector{T}(::UndefInitializer, n::Integer) where T
-        return new{T}(Vector{T}(undef, n), Set{Tuple}(), Set{Tuple}())
+        return new{T}(Vector{T}(undef, n), Set{Int}())
     end
     
     function TrackedVector{T}(v::Vector{T}) where T
-        return new{T}(v, Set{Tuple}(), Set{Tuple}())
+        return new{T}(v, Set{Int}())
     end
 end
 
 # Implement AbstractArray interface
 Base.size(v::TrackedVector) = size(v.data)
-Base.getindex(v::TrackedVector, i::Integer) = begin
-    push!(v._gotten, (i,))
-    v.data[i]
+Base.getindex(v::TrackedVector{T}, i::Integer) where T = begin
+    push!(v._accessed, i)
+    element = v.data[i]
+    if hasfield(typeof(element), :_container)
+        setfield!(element, :_container, v)
+        setfield!(element, :_index, i)
+    end
+    element
 end
 
-Base.setindex!(v::TrackedVector, x, i::Integer) = begin
-    push!(v._changed, (i,))
+Base.setindex!(v::TrackedVector{T}, x, i::Integer) where T = begin
     v.data[i] = x
-    
-    # Set container reference in the element if applicable
     if hasfield(typeof(x), :_container)
         setfield!(x, :_container, v)
         setfield!(x, :_index, i)
@@ -147,7 +150,7 @@ end
 
 # Track property access on elements
 function Base.getproperty(v::TrackedVector, field::Symbol)
-    if field in (:data, :_gotten, :_changed)
+    if field in (:data, :_accessed)
         return getfield(v, field)
     else
         error("Field $field not found in TrackedVector")
@@ -155,22 +158,11 @@ function Base.getproperty(v::TrackedVector, field::Symbol)
 end
 
 function Base.setproperty!(v::TrackedVector, field::Symbol, value)
-    if field in (:data, :_gotten, :_changed)
+    if field in (:data, :_accessed)
         setfield!(v, field, value)
     else
         error("Cannot set field $field in TrackedVector")
     end
-end
-
-# Track property access on elements
-function Base.getproperty(obj::TrackedVector, i::Integer, field::Symbol)
-    push!(obj._gotten, (i, field))
-    getproperty(obj.data[i], field)
-end
-
-function Base.setproperty!(obj::TrackedVector, i::Integer, field::Symbol, value)
-    push!(obj._changed, (i, field))
-    setproperty!(obj.data[i], field, value)
 end
 
 """
@@ -179,7 +171,16 @@ end
 Returns the set of fields that have been accessed.
 """
 function gotten(obj::TrackedVector)
-    return obj._gotten
+    result = Set{Tuple}()
+    for i in obj._accessed
+        element = obj.data[i]
+        if hasfield(typeof(element), :_gotten) && getfield(element, :_gotten) !== nothing
+            for field in getfield(element, :_gotten)
+                push!(result, (i, field))
+            end
+        end
+    end
+    result
 end
 
 """
@@ -188,7 +189,16 @@ end
 Returns the set of fields that have been modified.
 """
 function changed(obj::TrackedVector)
-    return obj._changed
+    result = Set{Tuple}()
+    for i in obj._accessed
+        element = obj.data[i]
+        if hasfield(typeof(element), :_changed) && getfield(element, :_changed) !== nothing
+            for field in getfield(element, :_changed)
+                push!(result, (i, field))
+            end
+        end
+    end
+    result
 end
 
 """
@@ -197,9 +207,16 @@ end
 Reset all tracking information.
 """
 function reset_tracking!(obj::TrackedVector)
-    empty!(obj._gotten)
-    empty!(obj._changed)
-    return obj
+    empty!(obj._accessed)
+    for element in obj.data
+        if hasfield(typeof(element), :_gotten) && getfield(element, :_gotten) !== nothing
+            empty!(getfield(element, :_gotten))
+        end
+        if hasfield(typeof(element), :_changed) && getfield(element, :_changed) !== nothing
+            empty!(getfield(element, :_changed))
+        end
+    end
+    obj
 end
 
 """
@@ -208,8 +225,12 @@ end
 Reset the tracking of accessed fields.
 """
 function reset_gotten!(obj::TrackedVector)
-    empty!(obj._gotten)
-    return obj
+    for element in obj.data
+        if hasfield(typeof(element), :_gotten) && getfield(element, :_gotten) !== nothing
+            empty!(getfield(element, :_gotten))
+        end
+    end
+    obj
 end
 
 # Helper function to check if property exists

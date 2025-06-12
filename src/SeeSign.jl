@@ -2,8 +2,10 @@ module SeeSign
 
 include("higher_order.jl")
 include("changed.jl")
-include("sim.jl")
 include("tracked.jl")
+include("depnet.jl")
+include("framework.jl")
+include("sim.jl")
 
 export StepArray, changed, previous_value, accept
 
