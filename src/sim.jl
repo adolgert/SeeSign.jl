@@ -536,7 +536,7 @@ and can therefore now infect a neighbor.
     @generate direction ∈ keys(DirectionDelta)
     @if begin
             health = physical.agent[who].health
-            neighbor_cart_loc = physical.agent[who_agent].loc + DirectionDelta[direction]
+            neighbor_cart_loc = physical.agent[who].loc + DirectionDelta[direction]
             if health == Sick && checkbounds(Bool, physical.board_dim, neighbor_cart_loc)
                 neighbor_loc_linear = LinearIndices(physical.board_dim)[neighbor_cart_loc]
                 neighbor = physical.board[neighbor_loc_linear].occupant
@@ -585,7 +585,7 @@ function tosickfriend_generate_event(physical, place_key, existing_events)
         # variables defined here to be found by the code from the @action macro.
         sym_enable_clock = begin
             health = physical.agent[who].health
-            neighbor_cart_loc = physical.agent[who_agent].loc + DirectionDelta[direction]
+            neighbor_cart_loc = physical.agent[who].loc + DirectionDelta[direction]
             if health == Sick && checkbounds(Bool, physical.board_dim, neighbor_cart_loc)
                 neighbor_loc_linear = LinearIndices(physical.board_dim)[neighbor_cart_loc]
                 neighbor = physical.board[neighbor_loc_linear].occupant
@@ -613,7 +613,7 @@ function tosickfriend_generate_event(physical, place_key, existing_events)
             enable_func = let who = sym_index_value, direction = direction
                 function(physical)
                     health = physical.agent[who].health
-                    neighbor_cart_loc = physical.agent[who_agent].loc + DirectionDelta[direction]
+                    neighbor_cart_loc = physical.agent[who].loc + DirectionDelta[direction]
                     if health == Sick && checkbounds(Bool, physical.board_dim, neighbor_cart_loc)
                         neighbor_loc_linear = LinearIndices(physical.board_dim)[neighbor_cart_loc]
                         neighbor = physical.board[neighbor_loc_linear].occupant
