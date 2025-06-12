@@ -35,6 +35,21 @@ end
     birthtime::Float64
 end
 
+export ascii_to_array
+function ascii_to_array(ascii_image::String)::Array{Int,2}
+    lines = split(strip(ascii_image), '\n')
+    rows = length(lines)
+    cols = length(split(strip(lines[1])))
+    
+    result = zeros(Int, rows, cols)
+    for (i, line) in enumerate(lines)
+        values = parse.(Int, split(strip(line)))
+        result[i, :] = values
+    end
+    return result
+end
+
+
 const BoardIndices = CartesianIndices{2, Tuple{Base.OneTo{Int64}, Base.OneTo{Int64}}}
 
 # There are agents located on a 2D board.
@@ -52,12 +67,32 @@ mutable struct BoardState <: PhysicalState
         for (i, val) in enumerate(board)
             linboard[i] = Square(val, 1.0)
         end
-        location = findall(x -> x != 0, board)
+        location::Vector{CartesianIndex{2}} = findall(x -> x != 0, board)
         agent = TrackedVector{Agent}(undef, length(location))
-        for (i, loc) in enumerate(location)
-            agent[i] = Agent(Healthy, loc, 0.0)
+        for foundidx in eachindex(location)
+            loc = location[foundidx]
+            agentidx = board[loc]
+            agent[agentidx] = Agent(Healthy, loc, 0.0)
         end
         new(linboard, agent, CartesianIndices(board))
+    end
+end
+
+
+function Base.show(io::IO, state::BoardState)
+    println(io, "BoardState")
+    infected = [
+        agentidx for agentidx in eachindex(state.agent)
+            if state.agent[agentidx].health == Sick
+            ]
+    println(io, "Infected agents: ", infected)
+    ci = state.board_dim
+    li = LinearIndices(ci)
+    for rowidx in axes(ci, 1)
+        occ = [string(state.board[li[rowidx, colidx]].occupant)
+                for colidx in axes(ci, 2)
+                ]
+        println(io, join(occ, " "))
     end
 end
 
@@ -249,6 +284,26 @@ end
 function fire!(tn::MoveTransition, physical)
     move_in_direction(physical, tn.who, tn.direction)
     return nothing
+end
+
+
+function allowed_moves(physical)
+    moves = Vector{ClockKey}()
+    for agent_idx in eachindex(physical.agent)
+        loc = physical.agent[agent_idx].loc
+        loc_linear = LinearIndices(physical.board_dim)[loc]
+        @assert physical.board[loc_linear].occupant == agent_idx
+        for direction in keys(DirectionDelta)
+            new_loc = loc + DirectionDelta[direction]
+            if checkbounds(Bool, physical.board_dim, new_loc)
+                new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
+                if physical.board[new_loc_linear].occupant == 0
+                    push!(moves, ClockKey((:MoveTransition, agent_idx, direction)))
+                end
+            end
+        end
+    end
+    return moves
 end
 
 
@@ -515,6 +570,45 @@ function initialize!(physical::PhysicalState, individuals::Int, rng)
 end
 
 
+function allowed_infects(physical)
+    infects = Vector{ClockKey}()
+    for agent_idx in eachindex(physical.agent)
+        if physical.agent[agent_idx].health == Sick
+            loc = physical.agent[agent_idx].loc
+            for direction in keys(DirectionDelta)
+                neighbor_loc = loc + DirectionDelta[direction]
+                if checkbounds(Bool, physical.board_dim, neighbor_loc)
+                    neighbor_loc_linear = LinearIndices(physical.board_dim)[neighbor_loc]
+                    neighbor_agent = physical.board[neighbor_loc_linear].occupant
+                    if neighbor_agent > 0 && physical.agent[neighbor_agent].health == Healthy
+                        push!(infects, ClockKey((:InfectTransition, agent_idx, neighbor_agent)))
+                    end
+                end
+            end
+        end
+    end
+    return infects
+end
+
+
+function check_events(sim)
+    moves = allowed_moves(sim.physical)
+    infects = allowed_infects(sim.physical)
+    allowed_events = union(moves, infects)
+    if allowed_events != keys(sim.enabled_events)
+        not_enabled = setdiff(allowed_events, keys(sim.enabled_events))
+        not_allowed = setdiff(keys(sim.enabled_events), allowed_events)
+        if !isempty(not_enabled)
+            @error "Shouldn be enabled $(not_enabled)"
+        end
+        if !isempty(not_allowed)
+            @error "Should be allowed $(not_allowed)"
+        end
+        @show sim.physical
+        @assert isempty(not_enabled) && isempty(not_allowed)
+    end
+end
+
 
 function run(event_count)
     Sampler = CombinedNextReaction{ClockKey,Float64}
@@ -538,6 +632,7 @@ function run(event_count)
     initialize!(sim.physical, agent_cnt, sim.rng)
     @assert isconsistent(sim.physical) "The initial physical state is inconsistent"
     deal_with_changes(sim)
+    check_events(sim)
     @assert isconsistent(sim.physical)
     for i in 1:event_count
         (when, what) = next(sim.sampler, sim.when, sim.rng)
@@ -548,5 +643,6 @@ function run(event_count)
             @info "No more events to process after $i iterations."
             break
         end
+        check_events(sim)
     end
 end
