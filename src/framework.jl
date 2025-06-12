@@ -91,6 +91,7 @@ end
 mutable struct SimulationFSM{State,Sampler,CK}
     physical::State
     sampler::Sampler
+    event_rules::Vector{Function}
     when::Float64
     rng::Xoshiro
     depnet::DependencyNetwork{CK}
@@ -98,16 +99,24 @@ mutable struct SimulationFSM{State,Sampler,CK}
 end
 
 
-function SimulationFSM(physical, sampler::SSA{CK}, seed) where {CK}
+function SimulationFSM(physical, sampler::SSA{CK}, rules, seed) where {CK}
     return SimulationFSM{typeof(physical),typeof(sampler),CK}(
         physical,
         sampler,
+        rules,
         0.0,
         Xoshiro(seed),
         DependencyNetwork{CK}(),
         Dict{CK,EventData}()
     )
 end
+
+function checksim(sim::SimulationFSM)
+    sim_clocks = keys(sim.enabled_events)
+    dep_clocks = keys(sim.depnet.event)
+    @assert sim_clocks == dep_clocks
+end
+
 
 """
     deal_with_changes(sim::SimulationFSM)
@@ -136,25 +145,28 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
             push!(clock_seen, clock_key)
         end
         # It's possible this should pass in the set of all existing events.
-        gen = tomove_generate_event(sim.physical, place, clock_seen)
-        isnothing(gen) && continue
-        for evtidx in eachindex(gen.create)
-            event_data = EventData(gen.create[evtidx], gen.enabled[evtidx])
-            evtkey = clock_key(event_data.event)
-            sim.enabled_events[evtkey] = event_data
+        for rule_func in sim.event_rules
+            gen = rule_func(sim.physical, place, clock_seen)
+            isnothing(gen) && continue
+            for evtidx in eachindex(gen.create)
+                event_data = EventData(gen.create[evtidx], gen.enabled[evtidx])
+                evtkey = clock_key(event_data.event)
+                sim.enabled_events[evtkey] = event_data
 
-            begin
-                resetread(sim.physical)
-                enable(event_data.event, sim.sampler, sim.physical, sim.when, sim.rng)
-                rate_deps = wasread(sim.physical)
+                begin
+                    resetread(sim.physical)
+                    enable(event_data.event, sim.sampler, sim.physical, sim.when, sim.rng)
+                    rate_deps = wasread(sim.physical)
+                end
+
+                @debug "Evtkey $(evtkey) with enable deps $(gen.depends[evtidx]) rate deps $(rate_deps)"
+                add_event!(sim.depnet, evtkey, gen.depends[evtidx], rate_deps)
             end
-
-            @debug "Evtkey $(evtkey) with enable deps $(gen.depends[evtidx]) rate deps $(rate_deps)"
-            add_event!(sim.depnet, evtkey, gen.depends[evtidx], rate_deps)
         end
     end
     disable_clocks!(sim, clock_toremove)
     accept(sim.physical)
+    checksim(sim)
 end
 
 

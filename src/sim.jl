@@ -128,6 +128,26 @@ abstract type BoardTransition <: SimTransition end
 A dynamic generator of events. This looks at a changed place in the 
 physical state and generates clock keys for events that could
 depend on that place.
+
+```
+@react tomove(physical) begin
+    @match changed(physical.board[loc].occupant)
+    @generate direction ∈ keys(DirectionDelta)
+    @if begin
+            agent = physical.board[loc].occupant
+            loc_cartesian = physical.board_dim[loc]
+            new_loc = loc_cartesian + DirectionDelta[direction]
+            if checkbounds(Bool, physical.board_dim, new_loc)
+                new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
+                agent > 0 &&
+                physical.board[new_loc_linear].occupant == 0
+            else
+                false
+            end
+        end
+    @action MoveTransition(agent, direction)
+end
+```
 """
 function tomove_generate_event(physical, place_key, existing_events)
     # In this function, a variabled name that starts with `sym_` will be
@@ -139,8 +159,7 @@ function tomove_generate_event(physical, place_key, existing_events)
         return nothing
     end
     # loc comes from matching the place key.
-    loc_linear = sym_index_value
-    loc_cartesian = physical.board_dim[loc_linear]
+    loc = sym_index_value
 
     # Not sure where to define this type BoardTransition.
     sym_create = BoardTransition[]
@@ -150,29 +169,49 @@ function tomove_generate_event(physical, place_key, existing_events)
     # Create the set of generative elements. We will do a for-loop over
     # these, but we need to insert code into the for-loop.
     # The top of the for-loop comes from the @generate macro.
-    for direction in keys(DirectionDelta)
+    for direction ∈ keys(DirectionDelta)
         # Inserted code at beginning.
         resetread(physical)
 
-        # Now comes the code block from @if.
-        sym_should_enable = begin
-            agent = physical.board[loc_linear].occupant
+        # Now comes the code block from @if. This time the code block
+        # is in a BEGIN-END block and NOT a closure because we need any
+        # variables defined here to be found by the code from the @action macro.
+        sym_enable_clock = begin
+            agent = physical.board[loc].occupant
+            loc_cartesian = physical.board_dim[loc]
             new_loc = loc_cartesian + DirectionDelta[direction]
             if checkbounds(Bool, physical.board_dim, new_loc)
                 new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
                 agent > 0 &&
-                  physical.board[new_loc_linear].occupant == 0
+                physical.board[new_loc_linear].occupant == 0
             else
                 false
             end
         end
 
         # Inserted code at ending.
-        if sym_should_enable
+        if sym_enable_clock
             input_places = wasread(physical)
             
             # This constructor call comes from the @action macro.
             transition = MoveTransition(agent, direction)
+
+            # This is the function from the @if block again, but here
+            # it is a closure.
+            enable_func = let loc = sym_index_value, direction = direction
+                function(physical)
+                    agent = physical.board[loc].occupant
+                    loc_cartesian = physical.board_dim[loc]
+                    new_loc = loc_cartesian + DirectionDelta[direction]
+                    if checkbounds(Bool, physical.board_dim, new_loc)
+                        new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
+                        agent > 0 &&
+                        physical.board[new_loc_linear].occupant == 0
+                    else
+                        false
+                    end
+                end
+            end
 
             # Then back to the inserted code.
             clock_key(transition) in existing_events && continue
@@ -180,27 +219,7 @@ function tomove_generate_event(physical, place_key, existing_events)
             push!(sym_create, transition)
             # That transition depends on the input places just read during @if.
             push!(sym_depends, input_places)
-            # And we need to be able to disable the transition if
-            # the @if condition is no longer true, so save that function.
-            # Capture the current values in the closure
-            let loc_linear_capture = loc_linear, direction_capture = direction
-                push!(sym_enabled, function(physical)
-                    # This will capture place and the generated variables.
-                    loc_cartesian_capture = physical.board_dim[loc_linear_capture]
-                    sym_should_enable = begin
-                        agent = physical.board[loc_linear_capture].occupant
-                        new_loc = loc_cartesian_capture + DirectionDelta[direction_capture]
-                        if checkbounds(Bool, physical.board_dim, new_loc)
-                            new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
-                            agent > 0 &&
-                                physical.board[new_loc_linear].occupant == 0
-                        else
-                            false
-                        end
-                    end
-                    return sym_should_enable
-                end)
-            end
+            push!(sym_enabled, enable_func)
         end
     end
     if isempty(sym_create)
@@ -233,6 +252,141 @@ function fire!(tn::MoveTransition, physical)
 end
 
 
+function sick_movement(physical, who_agent, direction)
+    who_health = physical.agent[who_agent].health
+    neighbor_cart_loc = physical.agent[who_agent].loc + DirectionDelta[direction]
+    checkbounds(Bool, physical.board_dim, neighbor_cart_loc) || return (false, 0, 0)
+
+    neighbor_loc_linear = LinearIndices(physical.board_dim)[neighbor_cart_loc]
+    neighbor_agent = physical.board[neighbor_loc_linear].occupant
+    neighbor_health = physical.agent[neighbor_agent].health
+    healths = [(who_health, who_agent), (neighbor_health, neighbor_agent)]
+    sort!(healths)
+    if healths[1][1] == Healthy && healths[2][1] == Sick
+        # Susceptible moves next to infected.
+        # The susceptible agent becomes infected.
+        move_agent(physical, who_agent, neighbor_cart_loc)
+        physical.agent[who_agent].health = Sick
+        return (true, healths[1][2], healths[2][2])
+    else
+        return (false, 0, 0)
+    end
+end
+
+
+"""
+Let's add a process for susceptible-infected.
+There are two cases to handle that have to do with movement.
+1. Susceptible moves next to infected.
+2. Infected moves next to susceptible.
+
+```
+@react toencroach(physical) begin
+    @match changed(physical.agent[who].loc)
+    @generate direction ∈ keys(DirectionDelta)
+    @if begin
+            agent = physical.board[who].occupant
+            agent > 0 || return false
+            result, susceptible, infectious = sick_movement(physical, agent, direction)
+            if !result
+                return false
+            end
+        end
+    @action InfectTransition(infectious, susceptible)
+end
+```
+"""
+function toencroach_generate_event(physical, place_key, existing_events)
+    # In this function, a variabled name that starts with `sym_` will be
+    # generated by a macro, so it will be replaced with a unique name.
+
+    # Select based on the place key.
+    sym_array_name, sym_index_value, sym_struct_value... = place_key
+    if sym_array_name != :agent || sym_struct_value != (:loc,)
+        return nothing
+    end
+    # who comes from matching the place key.
+    who = sym_index_value
+
+    # Not sure where to define this type BoardTransition.
+    sym_create = BoardTransition[]
+    sym_depends = Set{PlaceKey}[]
+    sym_enabled = Function[]
+
+    # Create the set of generative elements. We will do a for-loop over
+    # these, but we need to insert code into the for-loop.
+    # The top of the for-loop comes from the @generate macro.
+    for direction in keys(DirectionDelta)
+        # Inserted code at beginning.
+        resetread(physical)
+
+        # Now comes the code block from @if. This time the code block
+        # is in a BEGIN-END block and NOT a closure because we need any
+        # variables defined here to be found by the code from the @action macro.
+        sym_enable_clock = begin
+            agent = physical.board[who].occupant
+            if agent > 0
+                result, susceptible, infectious = sick_movement(physical, agent, direction)
+                result
+            else
+                false
+            end
+        end
+
+        # Inserted code at ending.
+        if sym_enable_clock
+            input_places = wasread(physical)
+            
+            # This constructor call comes from the @action macro.
+            transition = InfectTransition(infectious, susceptible)
+
+            # This is the function from the @if block again, but here
+            # it is a closure.
+            enable_func = let who = sym_index_value, direction = direction
+                function(physical)
+                    agent = physical.board[who].occupant
+                    if agent > 0
+                        result, susceptible, infectious = sick_movement(physical, agent, direction)
+                        result
+                    else
+                        false
+                    end
+                end
+            end
+
+            # Then back to the inserted code.
+            clock_key(transition) in existing_events && continue
+            # The point of this is to make a new transition.
+            push!(sym_create, transition)
+            # That transition depends on the input places just read during @if.
+            push!(sym_depends, input_places)
+            push!(sym_enabled, enable_func)
+        end
+    end
+    if isempty(sym_create)
+        return nothing
+    else
+        return (create=sym_create, depends=sym_depends, enabled=sym_enabled)
+    end
+end
+
+
+struct InfectTransition <: BoardTransition
+    infectious::Int
+    susceptible::Int
+end
+
+clock_key(it::InfectTransition) = ClockKey((:InfectTransition, it.infectious, it.susceptible))
+
+function enable(tn::InfectTransition, sampler, physical, when, rng)
+    enable!(sampler, clock_key(tn), Exponential(1.0), when, when, rng)
+    return nothing
+end
+
+function fire!(it::InfectTransition, physical)
+    physical.agent[it.susceptible].health = Sick
+end
+
 
 function initialize!(physical::PhysicalState, individuals::Int, rng)
     for ind_idx in 1:individuals
@@ -256,9 +410,14 @@ function run(event_count)
         raw_board[i] = i
     end
     physical = BoardState(raw_board)
+    event_rules = [
+        tomove_generate_event,
+        toencroach_generate_event
+    ]
     sim = SimulationFSM(
         physical,
         Sampler(),
+        event_rules,
         2947223
     )
     initialize!(sim.physical, agent_cnt, sim.rng)
