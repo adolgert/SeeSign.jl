@@ -1,9 +1,9 @@
 using Test
 using SeeSign
+using Logging
 
 @testset "Simulation Tests" begin
-    using SeeSign
-    @testset "Run the sim" begin
+    with_logger(ConsoleLogger(stderr, Logging.Debug)) do
         SeeSign.run(10)
     end
 end

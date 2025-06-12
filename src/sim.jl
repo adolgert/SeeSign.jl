@@ -1,10 +1,6 @@
 import Base
 using Distributions
-using Random
-using SparseArrays
-using Test
 using Logging
-using CompetingClocks
 
 
 # They can move in any of four directions.
@@ -45,13 +41,13 @@ const BoardIndices = CartesianIndices{2, Tuple{Base.OneTo{Int64}, Base.OneTo{Int
 # The state is a checkerboard. Each plaquette in the checkerboard
 # is 0 or contains an individual identified by an integer.
 # An individual has a health state.
-mutable struct PhysicalState
+mutable struct BoardState <: PhysicalState
     board::TrackedVector{Square}
     agent::TrackedVector{Agent}
     # The tracked_vector is 1D but the board is 2D so we have to save conversion.
     board_dim::BoardIndices
 
-    function PhysicalState(board::AbstractArray)
+    function BoardState(board::AbstractArray)
         linboard = TrackedVector{Square}(undef, length(board))
         for (i, val) in enumerate(board)
             linboard[i] = Square(val, 1.0)
@@ -66,7 +62,7 @@ mutable struct PhysicalState
 end
 
 
-function isconsistent(physical::PhysicalState)
+function isconsistent(physical::BoardState)
     # Check that the board is consistent with the agents.
     seen_agents = Set{Int}()
     for square in eachindex(physical.board)
@@ -89,19 +85,6 @@ function isconsistent(physical::PhysicalState)
 end
 
 
-"""
-Iterate over all tracked vectors in the physical state.
-"""
-function over_tracked(fcallback::Function, physical::PhysicalState)
-    for field_symbol in fieldnames(PhysicalState)
-        member = getproperty(physical, field_symbol)
-        if isa(member, TrackedVector)
-            fcallback(field_symbol, member)
-        end
-    end
-end
-
-
 function move_agent(physical, agentidx, destination)
     old_loc = physical.agent[agentidx].loc
     old_board_idx = LinearIndices(physical.board_dim)[old_loc]
@@ -118,57 +101,6 @@ function move_in_direction(physical, agentidx, direction)
     move_agent(physical, agentidx, newloc)
 end
 
-
-"""
-Return a list of changed places in the physical state.
-A place for this state is a tuple of a symbol and the Cartesian index.
-The symbol is the name of the array within the PhysicalState.
-"""
-function changed(physical::PhysicalState)
-    places = Set{Tuple}()
-    over_tracked(physical) do fieldname, member
-        union!(places, [(fieldname, key...) for key in changed(member)])
-    end
-    return places
-end
-
-
-"""
-Return a list of changed places in the physical state.
-A place for this state is a tuple of a symbol and the Cartesian index.
-The symbol is the name of the array within the PhysicalState.
-"""
-function wasread(physical::PhysicalState)
-    places = Set{Tuple}()
-    over_tracked(physical) do fieldname, member
-        union!(places, [(fieldname, key...) for key in gotten(member)])
-    end
-    return places
-end
-
-"""
-Return a list of changed places in the physical state.
-A place for this state is a tuple of a symbol and the Cartesian index.
-The symbol is the name of the array within the PhysicalState.
-"""
-function resetread(physical::PhysicalState)
-    over_tracked(physical) do _, member
-        reset_gotten!(member)
-    end
-    return physical
-end
-
-
-"""
-The arrays in a PhysicalState record that they have been modified.
-This function erases the record of modifications.
-"""
-function accept(physical::PhysicalState)
-    over_tracked(physical) do _, member
-        reset_tracking!(member)
-    end
-    return physical
-end
 
 #######
 """
@@ -190,7 +122,7 @@ end
 
 
 ####### transitions
-abstract type BoardTransition end
+abstract type BoardTransition <: SimTransition end
 
 """
 A dynamic generator of events. This looks at a changed place in the 
@@ -301,114 +233,19 @@ function fire!(tn::MoveTransition, physical)
 end
 
 
-mutable struct SimulationFSM{Sampler}
-    physical::PhysicalState
-    sampler::Sampler
-    when::Float64
-    rng::Xoshiro
-    # What is enabled.
-    enabled_events::Dict{ClockKey,BoardTransition}
-    # Given a place that changed, what events should be checked for updates.
-    listen_places::Dict{PlaceKey,Set{ClockKey}}
-    # Given an event, upon which places does it depend?
-    event_enablers::Dict{ClockKey,Set{PlaceKey}}
-    # For an event, how do we check if it is enabled?
-    event_enabled::Dict{ClockKey,Function}
-end
 
-
-function SimulationFSM(physical, sampler, seed)
-    return SimulationFSM{typeof(sampler)}(
-        physical,
-        sampler,
-        0.0,
-        Xoshiro(seed),
-        Dict{ClockKey,BoardTransition}(),
-        Dict{PlaceKey,ClockKey}(),
-        Dict{ClockKey,PlaceKey}(),
-        Dict{ClockKey,Function}()
-    )
-end
-
-
-function isconsistent(sim::SimulationFSM)
-    isconsistent(sim.physical) || return false
-    # enabled_events has all events by their keys.
-    for clock_key in keys(sim.enabled_events)
-        # It must have an entry in the functions.
-        @assert clock_key in keys(sim.event_enabled) "Event $clock_key is not enabled"
-        # It must have an entry in the enablers.
-        @assert clock_key in keys(sim.event_enablers) "Event $clock_key is not enabled"
-        places = sim.event_enablers[clock_key]
-        for place in places
-            @assert place in keys(sim.listen_places) "Event $clock_key depends on place $place but it is not being listened to"
-            @assert clock_key in sim.listen_places[place] "Event $clock_key depends on place $place but it is not being listened to"
+function initialize!(physical::PhysicalState, individuals::Int, rng)
+    for ind_idx in 1:individuals
+        loc = rand(rng, physical.board_dim)
+        board_idx = LinearIndices(physical.board_dim)[loc]
+        while physical.board[board_idx].occupant != 0
+            loc = rand(rng, physical.board_dim)
+            board_idx = LinearIndices(physical.board_dim)[loc]
         end
-    end
-    for (place, listeners) in sim.listen_places
-        for clock_key in listeners
-            @assert place in sim.event_enablers[clock_key] "Place $place is being listened to by $clock_key but it is not an enabler of that event"
-        end
-    end
-    return true
-end
-
-
-"""
-    deal_with_changes(sim::SimulationFSM)
-
-An event changed the state. This function modifies events
-to respond to changes in state.
-"""
-function deal_with_changes(sim::SimulationFSM)
-    # The first job of this function is to create new events.
-
-    for place in changed(sim.physical)
-        clocks_listening = get(sim.listen_places, place, Set{ClockKey}())
-        for clock_key in clocks_listening
-            if !sim.event_enabled[clock_key](sim.physical)
-                remove_event!(sim, clock_key)
-            # elseif modify(clock_key, sim.physical)
-            end
-        end
-        # It's possible this should pass in the set of all existing events.
-        gen = tomove_generate_event(sim.physical, place, clocks_listening)
-        isnothing(gen) && continue
-        for evtidx in eachindex(gen.create)
-            add_event = gen.create[evtidx]
-            evtkey = clock_key(add_event)
-            enable(add_event, sim.sampler, sim.physical, sim.when, sim.rng)
-            sim.enabled_events[evtkey] = add_event
-            sim.event_enabled[evtkey] = gen.enabled[evtidx]
-            for hear_place in gen.depends[evtidx]
-                push!(get!(sim.listen_places, hear_place, Set{ClockKey}()), evtkey)
-            end
-            sim.event_enablers[evtkey] = gen.depends[evtidx]
-        end
-    end
-    accept(sim.physical)
-end
-
-
-
-function remove_event!(sim::SimulationFSM, clock_key::ClockKey)
-    if clock_key in keys(sim.enabled_events)
-        mt = sim.enabled_events[clock_key]
-        places_depended_on = get(sim.event_enablers, clock_key, Set{PlaceKey}())
-        for listen_place in places_depended_on
-            filter!(ck -> ck != clock_key, sim.listen_places[listen_place])
-            if isempty(sim.listen_places[listen_place])
-                delete!(sim.listen_places, listen_place)
-            end
-        end
-        if !isempty(places_depended_on)
-            delete!(sim.event_enablers, clock_key)
-        end
-        delete!(sim.enabled_events, clock_key)
-    else
-        @warn "Tried to remove an event that does not exist: $clock_key"
+        move_agent(physical, ind_idx, loc)
     end
 end
+
 
 
 function run(event_count)
@@ -418,7 +255,7 @@ function run(event_count)
     for i in 1:agent_cnt
         raw_board[i] = i
     end
-    physical = PhysicalState(raw_board)
+    physical = BoardState(raw_board)
     sim = SimulationFSM(
         physical,
         Sampler(),
@@ -438,18 +275,5 @@ function run(event_count)
             deal_with_changes(sim)
             @assert isconsistent(sim)
         end
-    end
-end
-
-
-function initialize!(physical::PhysicalState, individuals::Int, rng)
-    for ind_idx in 1:individuals
-        loc = rand(rng, physical.board_dim)
-        board_idx = LinearIndices(physical.board_dim)[loc]
-        while physical.board[board_idx].occupant != 0
-            loc = rand(rng, physical.board_dim)
-            board_idx = LinearIndices(physical.board_dim)[loc]
-        end
-        move_agent(physical, ind_idx, loc)
     end
 end

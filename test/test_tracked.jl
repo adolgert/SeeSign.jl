@@ -19,7 +19,9 @@ Base.zero(::Type{Person}) = Person(:neutral, 0, 0)
     end
     reset_tracking!(person)
     @test person[1] == Person(:neutral, 20, 1)
-    @test (1,) ∈ gotten(person)
+    @test (1,:health) ∈ gotten(person)
+    @test (1,:age) ∈ gotten(person)
+    @test (1,:location) ∈ gotten(person)
     @test person[2].health == :neutral
     @test (2, :health) ∈ gotten(person)
     person[3].location = 5

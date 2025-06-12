@@ -83,7 +83,7 @@ macro tracked_struct(typename, body)
             if private
                 return fieldnames($(esc(typename)))
             else
-                return $(map(QuoteNode, fieldnames))
+                return $(fieldnames)
             end
         end
     end
@@ -128,15 +128,20 @@ end
 
 # Implement AbstractArray interface
 Base.size(v::TrackedVector) = size(v.data)
-Base.getindex(v::TrackedVector, i::Integer) = begin
-    push!(v._gotten, (i,))
-    v.data[i]
+Base.getindex(v::TrackedVector{T}, i::Integer) where T = begin
+    element = v.data[i]
+    for name in propertynames(element)
+          push!(v._gotten, (i, name))
+    end
+    element
 end
 
-Base.setindex!(v::TrackedVector, x, i::Integer) = begin
-    push!(v._changed, (i,))
+Base.setindex!(v::TrackedVector{T}, x, i::Integer) where T = begin
+    for name in propertynames(x)
+        push!(v._changed, (i, name))
+    end
     v.data[i] = x
-    
+
     # Set container reference in the element if applicable
     if hasfield(typeof(x), :_container)
         setfield!(x, :_container, v)
