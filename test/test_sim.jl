@@ -96,8 +96,71 @@ end
 end
 
 
+@testset "macro version of tomove_generate_event" begin
+        ascii_image = """
+        0 0 7 0 0 0 0 3 0 0
+        0 0 0 0 0 0 0 0 0 6
+        0 0 0 0 0 0 0 0 0 0
+        0 0 0 0 0 0 0 0 0 0
+        0 0 0 0 0 0 0 0 9 2
+        0 0 0 0 0 0 0 0 0 0
+        0 0 0 0 0 5 0 0 0 1
+        0 0 0 0 0 0 0 4 0 0
+        0 0 0 0 0 8 0 0 0 0
+        0 0 0 0 0 0 0 0 0 0
+        """
+    arr = ascii_to_array(ascii_image)
+    physical = SeeSign.BoardState(arr)
+    place_idx = LinearIndices(arr)[1, 3]
+    place = (:board, place_idx, :occupant)
+
+    @react onmove(physical) begin
+        @onevent changed(physical.board[loc].occupant)
+        @generate direction ∈ keys(DirectionDelta)
+        @condition begin
+            agent = physical.board[loc].occupant
+            loc_cartesian = physical.board_dim[loc]
+            new_loc = loc_cartesian + DirectionDelta[direction]
+            if checkbounds(Bool, physical.board_dim, new_loc)
+                new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
+                agent > 0 &&
+                physical.board[new_loc_linear].occupant == 0
+            else
+                false
+            end
+        end
+        @action MoveTransition(agent, direction)
+    end
+
+    result = onmove_generate_event(physical, place, Set{SeeSign.ClockKey}())
+
+    move_cnt = 3
+    ckey = [SeeSign.clock_key(event) for event in result.create]
+    @test length(Set(ckey)) == move_cnt
+    @test length(result.create) == move_cnt
+    for event in result.create
+        @test isa(event, SeeSign.MoveTransition)
+        @test event.who == 7
+    end
+    @test length(result.depends) == move_cnt
+    for dep in result.depends
+        @test (:board, place_idx, :occupant) ∈ dep
+        @test length(dep) == 2
+    end
+    @test length(result.enabled) == move_cnt
+    for enabling in result.enabled
+        @test enabling(physical)
+    end
+
+    ## Modify the board by putting another piece in the way.
+    physical.board[LinearIndices(arr)[1, 4]].occupant = 13
+    # Then one of the enabling functions should be false.
+    @test sum([enabling(physical) for enabling in result.enabled]) == move_cnt - 1
+end
+
+
 @testset "Simulation Tests" begin
-    with_logger(ConsoleLogger(stderr, Logging.Debug)) do
+    with_logger(ConsoleLogger(stderr, Logging.Info)) do
         SeeSign.run(10)
     end
 end

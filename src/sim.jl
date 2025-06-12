@@ -2,6 +2,7 @@ import Base
 using Distributions
 using Logging
 
+export DirectionDelta, DirectionOpposite
 
 # They can move in any of four directions.
 @enum Direction NoDirection Up Left Down Right
@@ -370,6 +371,10 @@ function tospace_generate_event(physical, place_key, existing_events)
         return (create=sym_create, depends=sym_depends, enabled=sym_enabled)
     end
 end
+
+export MoveTransition, clock_key, enable, fire!, allowed_moves
+
+
 
 
 struct MoveTransition <: BoardTransition
