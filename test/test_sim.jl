@@ -36,7 +36,19 @@ end
         """
     arr = ascii_to_array(ascii_image)
     physical = SeeSign.BoardState(arr)
-    moves = SeeSign.allowed_moves(physical)
+    allowed = SeeSign.allowed_moves(physical)
+    Left, Right, Up, Down = (SeeSign.Left, SeeSign.Right, SeeSign.Up, SeeSign.Down)
+    for move in [
+        (7, Left), (7, Down), (7, Right), (3, Left), (3, Down), (3, Right),
+        (6, Up), (6, Left), (6, Down)
+    ]
+        @test (:MoveTransition, move...) in allowed
+    end
+    for move in [
+        (7, Up), (3, Up), (6, Right), (9, Right), (2, Right), (2, Left),
+    ]
+        @test (:MoveTransition, move...) ∉ allowed
+    end
 end
 
 

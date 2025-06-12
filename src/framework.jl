@@ -134,7 +134,6 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     #
     changed_places = changed(sim.physical)
     clock_toremove = Set{CK}()
-    clock_seen = Set{CK}()
     for place in changed_places
         depedges = getplace(sim.depnet, place)
         for clock_key in depedges.en
@@ -142,11 +141,18 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
             if !enable_func(sim.physical)
                 push!(clock_toremove, clock_key)
             end
-            push!(clock_seen, clock_key)
         end
+    end
+    # Split the loop over changed_places so that the first part disables clocks
+    # and the second part creates new ones. We do this because two clocks
+    # can have the SAME key but DIFFERENT dependencies. For instance, "move left"
+    # will depend on different board places after the piece has moved.
+    disable_clocks!(sim, clock_toremove)
+
+    for place in changed_places
         # It's possible this should pass in the set of all existing events.
         for rule_func in sim.event_rules
-            gen = rule_func(sim.physical, place, clock_seen)
+            gen = rule_func(sim.physical, place, keys(sim.enabled_events))
             isnothing(gen) && continue
             for evtidx in eachindex(gen.create)
                 event_data = EventData(gen.create[evtidx], gen.enabled[evtidx])
@@ -164,7 +170,6 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
             end
         end
     end
-    disable_clocks!(sim, clock_toremove)
     accept(sim.physical)
     checksim(sim)
 end

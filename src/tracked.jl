@@ -2,6 +2,16 @@
 This module provides tools for tracking access to and changes of data structures.
 It includes a macro for creating structs that track access and a vector type that
 tracks changes to its elements.
+
+There are two approaches to tracking changes to elements of a vector.
+
+ 1. Each element of the vector contains a pointer to the owning vector
+    and notifies it when there was a change.
+
+ 2. The vector trackes which elements were read and, when asked what
+    changed, checkes each element that was read to see if it was also
+    modified.
+    
 """
 
 using MacroTools
