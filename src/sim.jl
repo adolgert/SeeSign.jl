@@ -268,14 +268,11 @@ function run(event_count)
     for i in 1:event_count
         (when, what) = next(sim.sampler, sim.when, sim.rng)
         if isfinite(when) && !isnothing(what)
-            sim.when = when
-            whatevent = sim.enabled_events[what]
-            fire!(whatevent.event, sim.physical)
-            disable!(sim.sampler, what, when)
-            remove_event!(sim.depnet, Set([what]))
-            delete!(sim.enabled_events, what)
-            deal_with_changes(sim)
+            fire!(sim, when, what)
             @assert isconsistent(sim.physical)
+        else
+            @info "No more events to process after $i iterations."
+            break
         end
     end
 end

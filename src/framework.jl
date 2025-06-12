@@ -153,10 +153,25 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
             add_event!(sim.depnet, evtkey, gen.depends[evtidx], rate_deps)
         end
     end
+    disable_clocks!(sim, clock_toremove)
     accept(sim.physical)
-    remove_event!(sim.depnet, clock_toremove)
-    for clock_done in clock_toremove
-        delete!(sim.enabled_events, clock_done)
+end
+
+
+function disable_clocks!(sim::SimulationFSM, clock_keys)
+    @debug "Disable clock $(clock_keys)"
+    for clock_done in clock_keys
         disable!(sim.sampler, clock_done, sim.when)
+        delete!(sim.enabled_events, clock_done)
     end
+    remove_event!(sim.depnet, clock_keys)
+end
+
+
+function fire!(sim::SimulationFSM, when, what)
+    sim.when = when
+    whatevent = sim.enabled_events[what]
+    fire!(whatevent.event, sim.physical)
+    disable_clocks!(sim, [what])
+    deal_with_changes(sim)
 end
