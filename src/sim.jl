@@ -142,9 +142,9 @@ end
 This type will be used by a macro called `@react` to generate events.
 ```
 @react tomove(physical) begin
-    @match changed(physical.board[loc].occupant)
+    @onevent changed(physical.board[loc].occupant)
     @generate direction ∈ keys(DirectionDelta)
-    @if begin
+    @condition begin
         agent = physical.board[loc].occupant
         agent > 0 &&
         physical.board[loc + direction] == 0 &&
@@ -166,9 +166,9 @@ depend on that place.
 
 ```
 @react tomove(physical) begin
-    @match changed(physical.board[loc].occupant)
+    @onevent changed(physical.board[loc].occupant)
     @generate direction ∈ keys(DirectionDelta)
-    @if begin
+    @condition begin
             agent = physical.board[loc].occupant
             loc_cartesian = physical.board_dim[loc]
             new_loc = loc_cartesian + DirectionDelta[direction]
@@ -208,7 +208,7 @@ function tomove_generate_event(physical, place_key, existing_events)
         # Inserted code at beginning.
         resetread(physical)
 
-        # Now comes the code block from @if. This time the code block
+        # Now comes the code block from @condition. This time the code block
         # is in a BEGIN-END block and NOT a closure because we need any
         # variables defined here to be found by the code from the @action macro.
         sym_enable_clock = begin
@@ -231,7 +231,7 @@ function tomove_generate_event(physical, place_key, existing_events)
             # This constructor call comes from the @action macro.
             transition = MoveTransition(agent, direction)
 
-            # This is the function from the @if block again, but here
+            # This is the function from the @condition block again, but here
             # it is a closure.
             enable_func = let loc = sym_index_value, direction = direction
                 function(physical)
@@ -252,7 +252,7 @@ function tomove_generate_event(physical, place_key, existing_events)
             clock_key(transition) in existing_events && continue
             # The point of this is to make a new transition.
             push!(sym_create, transition)
-            # That transition depends on the input places just read during @if.
+            # That transition depends on the input places just read during @condition.
             push!(sym_depends, input_places)
             push!(sym_enabled, enable_func)
         end
@@ -271,9 +271,9 @@ but now the space is free and it can move.
 
 ```
 @react tomove(physical) begin
-    @match changed(physical.board[space].occupant)
+    @onevent changed(physical.board[space].occupant)
     @generate direction ∈ keys(DirectionDelta)
-    @if begin
+    @condition begin
             neighbor = physical.board[space].occupant
             loc_cartesian = physical.board_dim[space]
             mover_loc = loc_cartesian + DirectionDelta[direction]
@@ -313,7 +313,7 @@ function tospace_generate_event(physical, place_key, existing_events)
     for direction ∈ keys(DirectionDelta)
         # Inserted code at beginning.
         resetread(physical)
-        # Now comes the code block from @if. This time the code block
+        # Now comes the code block from @condition. This time the code block
         # is in a BEGIN-END block and NOT a closure because we need any
         # variables defined here to be found by the code from the @action macro.
         sym_enable_clock = begin
@@ -337,7 +337,7 @@ function tospace_generate_event(physical, place_key, existing_events)
             # This constructor call comes from the @action macro.
             transition = MoveTransition(mover, move_direction)
 
-            # This is the function from the @if block again, but here
+            # This is the function from the @condition block again, but here
             # it is a closure.
             enable_func = let space = sym_index_value, direction = direction
                 function(physical)
@@ -359,7 +359,7 @@ function tospace_generate_event(physical, place_key, existing_events)
             clock_key(transition) in existing_events && continue
             # The point of this is to make a new transition.
             push!(sym_create, transition)
-            # That transition depends on the input places just read during @if.
+            # That transition depends on the input places just read during @condition.
             push!(sym_depends, input_places)
             push!(sym_enabled, enable_func)
         end
@@ -445,9 +445,9 @@ There are two cases to handle that have to do with movement.
 
 ```
 @react toencroach(physical) begin
-    @match changed(physical.agent[who].loc)
+    @onevent changed(physical.agent[who].loc)
     @generate direction ∈ keys(DirectionDelta)
-    @if begin
+    @condition begin
             agent = physical.board[who].occupant
             if agent > 0
                 result, susceptible, infectious = sick_movement(physical, agent, direction)
@@ -485,7 +485,7 @@ function toencroach_generate_event(physical, place_key, existing_events)
         # Inserted code at beginning.
         resetread(physical)
 
-        # Now comes the code block from @if. This time the code block
+        # Now comes the code block from @condition. This time the code block
         # is in a BEGIN-END block and NOT a closure because we need any
         # variables defined here to be found by the code from the @action macro.
         sym_enable_clock = begin
@@ -500,7 +500,7 @@ function toencroach_generate_event(physical, place_key, existing_events)
             # This constructor call comes from the @action macro.
             transition = InfectTransition(infectious, susceptible)
 
-            # This is the function from the @if block again, but here
+            # This is the function from the @condition block again, but here
             # it is a closure.
             enable_func = let who = sym_index_value, direction = direction
                 function(physical)
@@ -513,7 +513,7 @@ function toencroach_generate_event(physical, place_key, existing_events)
             clock_key(transition) in existing_events && continue
             # The point of this is to make a new transition.
             push!(sym_create, transition)
-            # That transition depends on the input places just read during @if.
+            # That transition depends on the input places just read during @condition.
             push!(sym_depends, input_places)
             push!(sym_enabled, enable_func)
         end
@@ -532,9 +532,9 @@ and can therefore now infect a neighbor.
 
 ```
 @react tosickfriend(physical) begin
-    @match changed(physical.agent[who].health)
+    @onevent changed(physical.agent[who].health)
     @generate direction ∈ keys(DirectionDelta)
-    @if begin
+    @condition begin
             health = physical.agent[who].health
             neighbor_cart_loc = physical.agent[who].loc + DirectionDelta[direction]
             if health == Sick && checkbounds(Bool, physical.board_dim, neighbor_cart_loc)
@@ -560,7 +560,7 @@ function tosickfriend_generate_event(physical, place_key, existing_events)
     # In this function, a variabled name that starts with `sym_` will be
     # generated by a macro, so it will be replaced with a unique name.
 
-    # Select based on the place key according to the @match macro.
+    # Select based on the place key according to the @onevent macro.
     sym_array_name, sym_index_value, sym_struct_value... = place_key
     if sym_array_name != :agent || sym_struct_value != (:health,)
         return nothing
@@ -580,7 +580,7 @@ function tosickfriend_generate_event(physical, place_key, existing_events)
         # Inserted code at beginning.
         resetread(physical)
 
-        # Now comes the code block from @if. This time the code block
+        # Now comes the code block from @condition. This time the code block
         # is in a BEGIN-END block and NOT a closure because we need any
         # variables defined here to be found by the code from the @action macro.
         sym_enable_clock = begin
@@ -608,7 +608,7 @@ function tosickfriend_generate_event(physical, place_key, existing_events)
             # This constructor call comes from the @action macro.
             transition = InfectTransition(who, neighbor)
 
-            # This is the function from the @if block again, but here
+            # This is the function from the @condition block again, but here
             # it is a closure.
             enable_func = let who = sym_index_value, direction = direction
                 function(physical)
@@ -634,7 +634,7 @@ function tosickfriend_generate_event(physical, place_key, existing_events)
             clock_key(transition) in existing_events && continue
             # The point of this is to make a new transition.
             push!(sym_create, transition)
-            # That transition depends on the input places just read during @if.
+            # That transition depends on the input places just read during @condition.
             push!(sym_depends, input_places)
             push!(sym_enabled, enable_func)
         end
