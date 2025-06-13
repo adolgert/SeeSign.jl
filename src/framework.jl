@@ -90,7 +90,7 @@ macro react(func_sig, body)
                     
                     # Create enable function closure
                     enable_func = let $(index_var) = $(sym_index_value), $(loop_var) = $(loop_var)
-                        function($(physical_param))
+                        function($(physical_param),)
                             $(condition_expr)
                         end
                     end
