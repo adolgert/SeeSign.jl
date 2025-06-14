@@ -134,7 +134,7 @@ function isconsistent(physical::BoardState)
             end
         end
     end
-    @assert seen_agents == Set(1:length(physical.agent))
+    @assert seen_agents == Set(eachindex(physical.agent))
     return true
 end
 
@@ -309,62 +309,10 @@ function sick_movement(physical, who_agent, direction)
 end
 
 
-"""
-Let's add a process for susceptible-infected.
-There are two cases to handle that have to do with movement.
-1. Susceptible moves next to infected.
-2. Infected moves next to susceptible.
-"""
-@react toencroach(physical) begin
-    @onevent changed(physical.agent[who].loc)
-    @generate direction ∈ keys(DirectionDelta)
-    @condition begin
-            agent = physical.board[who].occupant
-            if agent > 0
-                result, susceptible, infectious = sick_movement(physical, agent, direction)
-                result
-            else
-                false
-            end
-        end
-    @action InfectTransition(infectious, susceptible)
-end
-
-
-
-"""
-This is the case where a neighbor didn't move but became infected in place
-and can therefore now infect a neighbor.
-"""
-@react tosickfriend(physical) begin
-    @onevent changed(physical.agent[who].health)
-    @generate direction ∈ keys(DirectionDelta)
-    @condition begin
-            health = physical.agent[who].health
-            neighbor_cart_loc = physical.agent[who].loc + DirectionDelta[direction]
-            if health == Sick && checkbounds(Bool, physical.board_dim, neighbor_cart_loc)
-                neighbor_loc_linear = LinearIndices(physical.board_dim)[neighbor_cart_loc]
-                neighbor = physical.board[neighbor_loc_linear].occupant
-                if neighbor > 0
-                    neighbor_health = physical.agent[neighbor].health
-                    # If the neighbor is susceptible, then it can become infected.
-                    neighbor_health == Healthy
-                else
-                    false
-                end
-            else
-                false
-            end
-        end
-    @action InfectTransition(who, neighbor)
-end
-
-
-
 struct InfectTransition <: BoardTransition
     infectious::Int
     susceptible::Int
-    InfectTransition(physical, who, infectious) = new(who, susceptible)
+    InfectTransition(physical, infectious, susceptible) = new(infectious, susceptible)
 end
 
 clock_key(it::InfectTransition) = ClockKey((:InfectTransition, it.infectious, it.susceptible))
@@ -429,7 +377,7 @@ end
 
 
 generators(::Type{InfectTransition}) = [
-    EventGenerator{InfectTransition}([:board, ℤ, :occupant], discordant_arrival)
+    EventGenerator{InfectTransition}([:board, ℤ, :occupant], discordant_arrival),
     EventGenerator{InfectTransition}([:agent, ℤ, :health], sick_in_place)
     ]
 
@@ -487,12 +435,13 @@ function check_events(sim)
     moves = allowed_moves(sim.physical)
     infects = allowed_infects(sim.physical)
     allowed_events = union(moves, infects)
-    if allowed_events != keys(sim.enabled_events)
-        not_enabled = setdiff(allowed_events, keys(sim.enabled_events))
-        not_allowed = setdiff(keys(sim.enabled_events), allowed_events)
+    enabled = keys(sim.enabled_events)
+    if allowed_events != enabled
+        not_enabled = setdiff(allowed_events, enabled)
+        not_allowed = setdiff(enabled, allowed_events)
         if !isempty(not_enabled) || !isempty(not_allowed)
             @show sim.physical
-            
+
             if !isempty(not_enabled)
                 @error "Should be enabled $(not_enabled)"
             end
@@ -508,7 +457,7 @@ end
 function run(event_count)
     Sampler = CombinedNextReaction{ClockKey,Float64}
     agent_cnt = 9
-    raw_board = zeros(Int, 10, 10)
+    raw_board = zeros(Int, 4, 4)
     for i in 1:agent_cnt
         raw_board[i] = i
     end
@@ -542,6 +491,7 @@ function run(event_count)
             @info "No more events to process after $i iterations."
             break
         end
+        @assert isconsistent(sim.physical)
         check_events(sim)
     end
 end
