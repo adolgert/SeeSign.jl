@@ -1,24 +1,4 @@
 
-@transition MoveTransition(mover, direction) begin
-    @react changed(physical.board[mover].occupant)
-    @generate begin
-        ((mover, direction) for direction in DIRECTIONS)
-    end
-    @react changed(physical.board[neighbor].occupant)
-    @generate begin
-
-    end
-end
-
-
-struct EventGenerator{T}
-    matchstr::Vector{Symbol}
-    generator::Function
-end
-
-genmatch(eg::EventGenerator, place_key) = accessmatch(eg.matchstr, place_key)
-(eg::EventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
-
 ########
 
 struct MoveTransition
@@ -27,9 +7,10 @@ struct MoveTransition
     MoveTransition(physical, mover, direction) = new(mover, direction)
 end
 
+# clock_key makes an immutable hash from a possibly-mutable struct for use in Dict.
 clock_key(event::MoveTransition) = (:MoveTransition, event.mover, event.direction)
 
-function move_precondition(::Type{MoveTransition}, physical, mover, direction)
+function precondition(::Type{MoveTransition}, physical, mover, direction)
     mover > 0 || return false
     neighbor_loc = physical.agent[mover].loc + direction
     checkbounds(Bool, physical.board_dim, neighbor_loc) || return false
@@ -65,32 +46,6 @@ generators(::Type{MoveTransition}) = [
     EventGenerator{MoveTransition}([:board, Z⁺, :occupant], move_change_gen)
     ]
 
-
-function movetransition_generate_event(gen::EventGenerator{T}, physical, place_key, existing_events) where T
-    sym_index_value = genmatch(gen, place_key)
-    isnothing(sym_index_value) && return nothing
-
-    sym_create = BoardTransition[]
-    sym_depends = Set{PlaceKey}[]
-    sym_enabled = Function[]
-
-    gen(physical, sym_index_value) do mover, direction
-        resetread(physical)
-        if move_precondition(T, physical, mover, direction)
-            input_places = wasread(physical)
-            if clock_key(transition) ∉ existing_events
-                push!(sym_create, T(physical, mover, direction))
-                push!(sym_depends, input_places)
-                push!(sym_enabled, enable_func)
-            end
-        end
-    end
-    if isempty(sym_create)
-        return nothing
-    else
-        return (create=sym_create, depends=sym_depends, enabled=sym_enabled)
-    end
-end
 
 
 # function tomove_generate_event(physical, place_key, existing_events)

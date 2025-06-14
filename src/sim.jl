@@ -414,7 +414,7 @@ function check_events(sim)
         if !isempty(not_allowed)
             @error "Should be allowed $(not_allowed)"
         end
-        @show sim.physical
+        # @show sim.physical
         @assert isempty(not_enabled) && isempty(not_allowed)
     end
 end

@@ -212,10 +212,53 @@ function accept(physical::PhysicalState)
     return physical
 end
 
+##### Helpers for events
+
+struct EventGenerator{T}
+    matchstr::Vector{Symbol}
+    generator::Function
+end
+
+genmatch(eg::EventGenerator, place_key) = accessmatch(eg.matchstr, place_key)
+(eg::EventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
+
+
+function transition_generate_event(gen::EventGenerator{T}, physical, place_key, existing_events) where T
+    sym_index_value = genmatch(gen, place_key)
+    isnothing(sym_index_value) && return nothing
+
+    sym_create = T[]
+    sym_depends = Set{Tuple}[]
+    sym_enabled = Function[]
+
+    gen(physical, sym_index_value) do mover, direction
+        resetread(physical)
+        if precondition(T, physical, mover, direction)
+            input_places = wasread(physical)
+            transition = T(physical, mover, direction)
+            if clock_key(transition) ∉ existing_events
+                push!(sym_create, transition)
+                push!(sym_depends, input_places)
+                let mover = mover, direction = direction
+                    push!(sym_enabled, function(physical)
+                        precondition(T, physical, mover, direction)
+                    end)
+                end
+            end
+        end
+    end
+    if isempty(sym_create)
+        return nothing
+    else
+        return (create=sym_create, depends=sym_depends, enabled=sym_enabled)
+    end
+end
+
 
 ########## The Simulation Finite State Machine (FSM)
 
 abstract type SimTransition end
+
 
 struct EventData
     # The Event object itself.
@@ -228,7 +271,7 @@ end
 mutable struct SimulationFSM{State,Sampler,CK}
     physical::State
     sampler::Sampler
-    event_rules::Vector{Function}
+    event_rules::Vector{EventGenerator}
     when::Float64
     rng::Xoshiro
     depnet::DependencyNetwork{CK}
@@ -249,9 +292,7 @@ function SimulationFSM(physical, sampler::SSA{CK}, rules, seed) where {CK}
 end
 
 function checksim(sim::SimulationFSM)
-    sim_clocks = keys(sim.enabled_events)
-    dep_clocks = keys(sim.depnet.event)
-    @assert sim_clocks == dep_clocks
+    @assert keys(sim.enabled_events) == keys(sim.depnet.event)
 end
 
 
@@ -275,7 +316,7 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
         depedges = getplace(sim.depnet, place)
         for clock_key in depedges.en
             enable_func = sim.enabled_events[clock_key].enable
-            if !enable_func(sim.physical)
+            if !enable_func(sim.physical) # Only argument is the physical state.
                 push!(clock_toremove, clock_key)
             end
         end
@@ -287,10 +328,8 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     disable_clocks!(sim, clock_toremove)
 
     for place in changed_places
-        # It's possible this should pass in the set of all existing events.
         for rule_func in sim.event_rules
-            gen = rule_func(sim.physical, place, keys(sim.enabled_events))
-            isnothing(gen) && continue
+            gen = transition_generate_event(rule_func, sim.physical, place, keys(sim.enabled_events))            isnothing(gen) && continue
             for evtidx in eachindex(gen.create)
                 event_data = EventData(gen.create[evtidx], gen.enabled[evtidx])
                 evtkey = clock_key(event_data.event)
