@@ -2,9 +2,11 @@ import Base
 using Distributions
 using Logging
 
+# Symbol for positive integer wildcard in event generation patterns - imported from regex_tuples.jl
+
 # This will simulate agents moving on a board and infecting each other.
 
-export DirectionDelta, DirectionOpposite
+export DirectionDelta, DirectionOpposite, MoveTransition
 
 # They can move in any of four directions.
 @enum Direction NoDirection Up Left Down Right
@@ -158,67 +160,79 @@ function move_in_direction(physical, agentidx, direction)
 end
 
 
+"""
+Given the integer index into the linear board vector, return an iterator
+over the linear indices of neighbors that are in bounds.
+"""
+function neighbor_lin(physical, boardlin)
+    ci = physical.board_dim[boardlin]
+    li = LinearIndices(physical.board_dim)
+    return (li[ci + DirectionDelta[direction]] 
+            for direction in keys(DirectionDelta) 
+            if checkbounds(Bool, physical.board_dim, ci + DirectionDelta[direction]))
+end
+
+
 ####### transitions
 abstract type BoardTransition <: SimTransition end
 
+struct MoveTransition
+    who::Int  # An agent index.
+    direction::Direction  # Direction that agent will move.
+    MoveTransition(physical, who, direction) = new(who, direction)
+end
+
+# clock_key makes an immutable hash from a possibly-mutable struct for use in Dict.
+clock_key(event::MoveTransition) = (:MoveTransition, event.who, event.direction)
+
+function precondition(::Type{MoveTransition}, physical, who, direction)
+    checkbounds(Bool, physical.agent, who) || return false
+    who_loc = physical.agent[who].loc
+    neighbor_loc = who_loc + DirectionDelta[direction]
+    checkbounds(Bool, physical.board_dim, neighbor_loc) || return false
+    neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
+    # Only check that the target is empty - don't read current position
+    physical.board[neighbor_lin].occupant == 0
+end
+
+
 """
-A dynamic generator of events. This looks at a changed place in the 
-physical state and generates clock keys for events that could
-depend on that place.
+An agent moved, and now there are new moves available to that agent.
+The place we watch is the location of an agent.
 """
-@react tomove(physical) begin
-    @onevent changed(physical.board[loc].occupant)
-    @generate direction ∈ keys(DirectionDelta)
-    @condition begin
-        agent = physical.board[loc].occupant
-        loc_cartesian = physical.board_dim[loc]
-        new_loc = loc_cartesian + DirectionDelta[direction]
-        if checkbounds(Bool, physical.board_dim, new_loc)
-            new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
-            agent > 0 &&
-            physical.board[new_loc_linear].occupant == 0
-        else
-            false
+function agent_moved_gen(f::Function, physical, agent_who)
+    agent_loc = physical.agent[agent_who].loc
+    for direction in keys(DirectionDelta)
+        if checkbounds(Bool, physical.board_dim, agent_loc + DirectionDelta[direction])
+            f(agent_who, direction)
         end
     end
-    @action MoveTransition(agent, direction)
 end
 
 
 """
-This is the case where a neighbor couldn't move because it was blocked
-but now the space is free and it can move.
+The neighbor of an agent got out of its way, so now the agent can move.
+The place we watch is a board space that was previously occupied.
 """
-@react tospace(physical) begin
-    @onevent changed(physical.board[space].occupant)
-    @generate direction ∈ keys(DirectionDelta)
-    @condition begin
-            neighbor = physical.board[space].occupant
-            loc_cartesian = physical.board_dim[space]
-            mover_loc = loc_cartesian + DirectionDelta[direction]
-            if neighbor == 0 && checkbounds(Bool, physical.board_dim, mover_loc)
-                mover_loc_linear = LinearIndices(physical.board_dim)[mover_loc]
-                mover = physical.board[mover_loc_linear].occupant
-                move_direction = DirectionOpposite[direction]
-                mover > 0
-            else
-                false
-            end
+function neighbor_moved_gen(f::Function, physical, board_lin)
+    board_loc = physical.board_dim[board_lin]
+    li = LinearIndices(physical.board_dim)
+    for direction in keys(DirectionDelta)
+        move_loc = board_loc + DirectionDelta[direction]
+        if checkbounds(Bool, physical.board_dim, move_loc)
+            move_lin = li[move_loc]
+            who = physical.board[move_lin].occupant
+            move_direction = DirectionOpposite[direction]
+            f(who, move_direction)
         end
-    @action MoveTransition(mover, move_direction)
+    end
 end
 
 
-export MoveTransition, clock_key, enable, fire!, allowed_moves
-
-
-struct MoveTransition <: BoardTransition
-    who::Int
-    direction::Direction
-end
-
-
-clock_key(mt::MoveTransition) = ClockKey((:MoveTransition, mt.who, mt.direction))
+generators(::Type{MoveTransition}) = [
+    EventGenerator{MoveTransition}([:agent, ℤ, :loc], agent_moved_gen),
+    EventGenerator{MoveTransition}([:board, ℤ, :occupant], neighbor_moved_gen)
+    ]
 
 
 """
@@ -428,12 +442,13 @@ function run(event_count)
         raw_board[i] = i
     end
     physical = BoardState(raw_board)
-    event_rules = [
-        tomove_generate_event,
-        tospace_generate_event,
-        toencroach_generate_event,
-        tosickfriend_generate_event
+    included_transitions = [
+        MoveTransition
     ]
+    event_rules = EventGenerator[]
+    for transition in included_transitions
+        append!(event_rules, generators(transition))
+    end
     sim = SimulationFSM(
         physical,
         Sampler(),

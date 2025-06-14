@@ -1,6 +1,7 @@
 using Logging
 using Random
-using CompetingClocks
+using CompetingClocks: SSA, CombinedNextReaction, enable!, disable!, next, Xoshiro
+using Distributions
 
 macro react(func_sig, body)
     # Parse function signature: name(physical)
@@ -214,6 +215,7 @@ end
 
 ##### Helpers for events
 
+export EventGenerator, generators
 struct EventGenerator{T}
     matchstr::Vector{Symbol}
     generator::Function
@@ -224,14 +226,19 @@ genmatch(eg::EventGenerator, place_key) = accessmatch(eg.matchstr, place_key)
 
 
 function transition_generate_event(gen::EventGenerator{T}, physical, place_key, existing_events) where T
-    sym_index_value = genmatch(gen, place_key)
-    isnothing(sym_index_value) && return nothing
+    match_result = genmatch(gen, place_key)
+    isnothing(match_result) && return nothing
+    @debug "matched $place_key"
+    
+    # Extract the first captured integer from the ℤ⁺ pattern
+    sym_index_value = match_result[1][1]
 
     sym_create = T[]
     sym_depends = Set{Tuple}[]
     sym_enabled = Function[]
 
     gen(physical, sym_index_value) do mover, direction
+        @debug "Direction $direction"
         resetread(physical)
         if precondition(T, physical, mover, direction)
             input_places = wasread(physical)
@@ -258,6 +265,8 @@ end
 ########## The Simulation Finite State Machine (FSM)
 
 abstract type SimTransition end
+
+generators(::Type{SimTransition}) = EventGenerator[]
 
 
 struct EventData
@@ -329,7 +338,8 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
 
     for place in changed_places
         for rule_func in sim.event_rules
-            gen = transition_generate_event(rule_func, sim.physical, place, keys(sim.enabled_events))            isnothing(gen) && continue
+            gen = transition_generate_event(rule_func, sim.physical, place, keys(sim.enabled_events))
+            isnothing(gen) && continue
             for evtidx in eachindex(gen.create)
                 event_data = EventData(gen.create[evtidx], gen.enabled[evtidx])
                 evtkey = clock_key(event_data.event)
