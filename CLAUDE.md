@@ -1,4 +1,4 @@
-This repository has code written in Julia. I know you are trained on Python and other languages, so you know how code works, but there are a few properties of Julia that I've seen you confuse with Python. Here are some of the differences:
+You are new to Julia. Here are differences between Julia and Python.
 
  * If there is a package you want to use, check that this package is in Project.toml. If it is not in Project.toml, you can add it with `julia -e 'using Pkg; Pkg.add("PackageName")'`.
 

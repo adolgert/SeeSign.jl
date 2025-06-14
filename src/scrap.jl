@@ -10,13 +10,44 @@
     end
 end
 
-function move_move_gen(physical, board_lin)
-    mover = physical.board[board_lin].occupant
-    return ((mover, direction) for direction in DIRECTIONS)
+
+struct EventGenerator{T}
+    matchstr::Vector{Symbol}
+    generator::Function
 end
 
-function move_change_gen(physical, board_lin)
-    vals = Tuple{Int,Direction}[]
+genmatch(eg::EventGenerator, place_key) = accessmatch(eg.matchstr, place_key)
+(eg::EventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
+
+########
+
+struct MoveTransition
+    mover::Int
+    direction::Direction
+    MoveTransition(physical, mover, direction) = new(mover, direction)
+end
+
+clock_key(event::MoveTransition) = (:MoveTransition, event.mover, event.direction)
+
+function move_precondition(::Type{MoveTransition}, physical, mover, direction)
+    mover > 0 || return false
+    neighbor_loc = physical.agent[mover].loc + direction
+    checkbounds(Bool, physical.board_dim, neighbor_loc) || return false
+    neighbor_lin = LinearIndices(physical.board)[neighbor_loc]
+    physical.board[mover].occupant > 0 &&
+        physical.board[neighbor_lin].occupant == 0
+end
+
+
+function move_move_gen(f::Function, physical, board_lin)
+    mover = physical.board[board_lin].occupant
+    for direction in DIRECTIONS
+        f(physical, mover, direction)
+    end
+end
+
+
+function move_change_gen(f::Function, physical, board_lin)
     li = LinearIndices(physical.board_dim)
     for direction in DIRECTIONS
         move_loc = physical.board_dim[board_lin] + direction
@@ -24,22 +55,42 @@ function move_change_gen(physical, board_lin)
             move_lin = li[move_loc]
             mover = physical.board_dim[move_lin].occupant
             move_direction = DirectionOpposite[direction]
-            push!(vals, (mover, move_direction))
+            f(physical, mover, move_direction)
         end
     end
-    return vals
 end
 
+generators(::Type{MoveTransition}) = [
+    EventGenerator{MoveTransition}([:board, Z⁺, :occupant], move_move_gen),
+    EventGenerator{MoveTransition}([:board, Z⁺, :occupant], move_change_gen)
+    ]
 
-function move_precondition(physical, mover, direction)
-    mover > 0 || return false
-    neighbor_loc = physical.agent[mover].loc + direction
-    checkbounds(Bool, physical.board_dim, neighbor_loc) || return false
-    neighbor_lin = LinearIndices(physical.board)[neighbor_loc]    
-    physical.board[mover].occupant > 0 && 
-        physical.board[neighbor_lin].occupant == 0
+
+function movetransition_generate_event(gen::EventGenerator{T}, physical, place_key, existing_events) where T
+    sym_index_value = genmatch(gen, place_key)
+    isnothing(sym_index_value) && return nothing
+
+    sym_create = BoardTransition[]
+    sym_depends = Set{PlaceKey}[]
+    sym_enabled = Function[]
+
+    gen(physical, sym_index_value) do mover, direction
+        resetread(physical)
+        if move_precondition(T, physical, mover, direction)
+            input_places = wasread(physical)
+            if clock_key(transition) ∉ existing_events
+                push!(sym_create, T(physical, mover, direction))
+                push!(sym_depends, input_places)
+                push!(sym_enabled, enable_func)
+            end
+        end
+    end
+    if isempty(sym_create)
+        return nothing
+    else
+        return (create=sym_create, depends=sym_depends, enabled=sym_enabled)
+    end
 end
-
 
 
 # function tomove_generate_event(physical, place_key, existing_events)
