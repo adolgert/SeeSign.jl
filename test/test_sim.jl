@@ -71,9 +71,7 @@ end
     @test place_idx == 21
     place = (:agent, 7, :loc)
     gens = generators(MoveTransition)
-    result = with_logger(ConsoleLogger(stderr, Logging.Info)) do
-        SeeSign.transition_generate_event(gens[1], physical, place, Set{SeeSign.ClockKey}())
-    end
+    result = SeeSign.transition_generate_event(gens[1], physical, place, Set{SeeSign.ClockKey}())
     @test !isnothing(result)
 
     move_cnt = 3
@@ -85,7 +83,6 @@ end
         @test event.who == 7
     end
     @test length(result.depends) == move_cnt
-    @show result.depends
     for dep in result.depends
         @test (:board, place_idx, :occupant) ∉ dep
         @test place ∈ dep
@@ -104,7 +101,7 @@ end
 
 
 @testset "Simulation Tests" begin
-    with_logger(ConsoleLogger(stderr, Logging.Info)) do
-        SeeSign.run(10)
+    with_logger(ConsoleLogger(stderr, Logging.Debug)) do
+        SeeSign.run(1000)
     end
 end

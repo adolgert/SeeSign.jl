@@ -228,7 +228,7 @@ genmatch(eg::EventGenerator, place_key) = accessmatch(eg.matchstr, place_key)
 function transition_generate_event(gen::EventGenerator{T}, physical, place_key, existing_events) where T
     match_result = genmatch(gen, place_key)
     isnothing(match_result) && return nothing
-    @debug "matched $place_key"
+    # @debug "matched $place_key"
     
     # Extract the first captured integer from the ℤ⁺ pattern
     sym_index_value = match_result[1][1]
@@ -238,7 +238,7 @@ function transition_generate_event(gen::EventGenerator{T}, physical, place_key, 
     sym_enabled = Function[]
 
     gen(physical, sym_index_value) do mover, direction
-        @debug "Direction $direction"
+        # @debug "Direction $direction"
         resetread(physical)
         if precondition(T, physical, mover, direction)
             input_places = wasread(physical)
@@ -362,6 +362,7 @@ end
 
 
 function disable_clocks!(sim::SimulationFSM, clock_keys)
+    isempty(clock_keys) && return
     @debug "Disable clock $(clock_keys)"
     for clock_done in clock_keys
         disable!(sim.sampler, clock_done, sim.when)
@@ -372,6 +373,7 @@ end
 
 
 function fire!(sim::SimulationFSM, when, what)
+    @debug "Firing $(what)"
     sim.when = when
     whatevent = sim.enabled_events[what]
     fire!(whatevent.event, sim.physical)

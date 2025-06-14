@@ -148,8 +148,10 @@ function move_agent(physical, agentidx, destination)
     old_board_idx = LinearIndices(physical.board_dim)[old_loc]
     new_board_idx = LinearIndices(physical.board_dim)[destination]
     
+    @assert physical.board[old_board_idx].occupant == agentidx
     physical.board[old_board_idx].occupant = 0
     physical.agent[agentidx].loc = destination
+    @assert physical.board[new_board_idx].occupant == 0
     physical.board[new_board_idx].occupant = agentidx
 end
 
@@ -159,6 +161,7 @@ function move_in_direction(physical, agentidx, direction)
     move_agent(physical, agentidx, newloc)
 end
 
+isneighbor(loca, locb) = sum(x^2 for x in (loca-locb).I) == 1
 
 """
 Given the integer index into the linear board vector, return an iterator
@@ -361,9 +364,74 @@ end
 struct InfectTransition <: BoardTransition
     infectious::Int
     susceptible::Int
+    InfectTransition(physical, who, infectious) = new(who, susceptible)
 end
 
 clock_key(it::InfectTransition) = ClockKey((:InfectTransition, it.infectious, it.susceptible))
+
+function precondition(::Type{InfectTransition}, physical, infectious, susceptible)
+    return physical.agent[infectious].health == Sick &&
+        physical.agent[susceptible].health == Healthy &&
+        isneighbor(physical.agent[infectious].loc, physical.agent[susceptible].loc)
+end
+
+
+function discordant_arrival(f::Function, physical, board_lin)
+    # Somebody showed up in this board location.
+    mover = physical.board[board_lin].occupant
+    mover > 0 || return
+    mover_health = physical.agent[mover].health
+    li = LinearIndices(physical.board_dim)
+    board_loc = physical.board_dim[board_lin]
+    for direction in keys(DirectionDelta)
+        # Beside them
+        neighbor_loc = board_loc + DirectionDelta[direction]
+        if checkbounds(Bool, physical.board_dim, neighbor_loc)
+            neighbor_lin = li[neighbor_loc]
+            neighbor = physical.board[neighbor_lin].occupant
+            # Was another agent.
+            if neighbor > 0
+                neighbor_health = physical.agent[neighbor].health
+                pair = [(mover_health, mover), (neighbor_health, neighbor)]
+                # They will sort into Health before Infectious
+                sort!(pair)
+                f(pair[2][2], pair[1][2])
+            end
+        end
+    end
+end
+
+
+"""
+Without anybody moving, two agents next to each other could have one become
+infected or one recover from infected to susceptible so that it could again
+become infected. Our job in this generator is to observe two neighboring
+agents, sort them according to health, and present them to the invariant
+for infection.
+"""
+function sick_in_place(f::Function, physical, sicko)
+    sick_health = physical.agent[sicko].health
+    sick_loc = physical.agent[sicko].loc
+    for direction in keys(DirectionDelta)
+        neighbor_loc = sick_loc + DirectionDelta[direction]
+        if checkbounds(Bool, physical.board_dim, neighbor_loc)
+            neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
+            neighbor = physical.board[neighbor_lin].occupant
+            if neighbor > 0
+                neighbor_health = physical.agent[neighbor].health
+                both = [(sick_health, sicko), (neighbor_health, neighbor)]
+                sort!(both)
+                f(both[2][2], both[1][2])
+            end
+        end
+    end
+end
+
+
+generators(::Type{InfectTransition}) = [
+    EventGenerator{InfectTransition}([:board, ℤ, :occupant], discordant_arrival)
+    EventGenerator{InfectTransition}([:agent, ℤ, :health], sick_in_place)
+    ]
 
 function enable(tn::InfectTransition, sampler, physical, when, rng)
     enable!(sampler, clock_key(tn), Exponential(1.0), when, when, rng)
@@ -422,14 +490,17 @@ function check_events(sim)
     if allowed_events != keys(sim.enabled_events)
         not_enabled = setdiff(allowed_events, keys(sim.enabled_events))
         not_allowed = setdiff(keys(sim.enabled_events), allowed_events)
-        if !isempty(not_enabled)
-            @error "Should be enabled $(not_enabled)"
+        if !isempty(not_enabled) || !isempty(not_allowed)
+            @show sim.physical
+            
+            if !isempty(not_enabled)
+                @error "Should be enabled $(not_enabled)"
+            end
+            if !isempty(not_allowed)
+                @error "Should be allowed $(not_allowed)"
+            end
+            @assert isempty(not_enabled) && isempty(not_allowed)
         end
-        if !isempty(not_allowed)
-            @error "Should be allowed $(not_allowed)"
-        end
-        # @show sim.physical
-        @assert isempty(not_enabled) && isempty(not_allowed)
     end
 end
 
@@ -443,7 +514,8 @@ function run(event_count)
     end
     physical = BoardState(raw_board)
     included_transitions = [
-        MoveTransition
+        MoveTransition,
+        InfectTransition
     ]
     event_rules = EventGenerator[]
     for transition in included_transitions
