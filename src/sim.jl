@@ -176,7 +176,7 @@ end
 ####### transitions
 abstract type BoardTransition <: SimTransition end
 
-struct MoveTransition
+struct MoveTransition <: BoardTransition
     who::Int  # An agent index.
     direction::Direction  # Direction that agent will move.
     MoveTransition(physical, who, direction) = new(who, direction)
