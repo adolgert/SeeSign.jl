@@ -437,18 +437,18 @@ function check_events(sim)
     allowed_events = union(moves, infects)
     enabled = keys(sim.enabled_events)
     if allowed_events != enabled
-        not_enabled = setdiff(allowed_events, enabled)
-        not_allowed = setdiff(enabled, allowed_events)
-        if !isempty(not_enabled) || !isempty(not_allowed)
+        should_be_enabled = setdiff(allowed_events, enabled)
+        should_be_disabled = setdiff(enabled, allowed_events)
+        if !isempty(should_be_enabled) || !isempty(should_be_disabled)
             @show sim.physical
 
-            if !isempty(not_enabled)
-                @error "Should be enabled $(not_enabled)"
+            if !isempty(should_be_enabled)
+                @error "Should be enabled but aren't: $(should_be_enabled)"
             end
-            if !isempty(not_allowed)
-                @error "Should be allowed $(not_allowed)"
+            if !isempty(should_be_disabled)
+                @error "Are enabled but shouldn't be: $(should_be_disabled)"
             end
-            @assert isempty(not_enabled) && isempty(not_allowed)
+            @assert isempty(should_be_enabled) && isempty(should_be_disabled)
         end
     end
 end

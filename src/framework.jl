@@ -320,9 +320,11 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     #       Disabled  create      nothing
     #
     changed_places = changed(sim.physical)
+    @debug "Changed places $changed_places"
     clock_toremove = Set{CK}()
     for place in changed_places
         depedges = getplace(sim.depnet, place)
+        @debug "Place $place has deps $(depedges.en)"
         for clock_key in depedges.en
             enable_func = sim.enabled_events[clock_key].enable
             if !enable_func(sim.physical) # Only argument is the physical state.

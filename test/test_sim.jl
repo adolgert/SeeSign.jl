@@ -87,6 +87,11 @@ end
         @test (:board, place_idx, :occupant) ∉ dep
         @test place ∈ dep
         @test length(dep) == 2
+        @show dep
+        remaining = pop!(setdiff(dep, [place]))
+        @show remaining
+        @test remaining[1] == :board
+        @test remaining[3] == :occupant
     end
     @test length(result.enabled) == move_cnt
     for enabling in result.enabled
