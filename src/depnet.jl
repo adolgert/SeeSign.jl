@@ -26,6 +26,8 @@ end
 
 
 function add_event!(net::DependencyNetwork{E}, evtkey, enplaces, raplaces) where {E}
+    remove_event!(net, [evtkey])
+    
     # Create the reverse mapping for this event
     en_place_set = Set{DNPlaceKey}(enplaces)
     ra_place_set = Set{DNPlaceKey}(raplaces)
@@ -93,3 +95,43 @@ end
 getplace(net::DependencyNetwork{E}, place) where E = get(
     net.place, place, zero(DoubleEdge{E})
     )
+
+
+export DepNetNaive
+
+"""
+For testing, we make an equivalent version of the dependency network
+but this one uses a very different internal structure, an edge list.
+"""
+mutable struct DepNetNaive
+    enable::Vector{Tuple{Any,Any}}
+    rate::Vector{Tuple{Any,Any}}
+    
+    DepNetNaive() = new(Vector{Tuple{Any,Any}}(), Vector{Tuple{Any,Any}}())
+end
+
+
+function add_event!(net::DepNetNaive, evtkey, enplaces, raplaces)
+    remove_event!(net, [evtkey])
+    for enplace in enplaces
+        (evtkey, enplace) in net.enable && continue
+        push!(net.enable, (evtkey, enplace))
+    end
+    for raplace in raplaces
+        (evtkey, raplace) in net.rate && continue
+        push!(net.rate, (evtkey, raplace))
+    end
+end
+
+
+function remove_event!(net::DepNetNaive, evtkeys)
+    filter!(edge -> edge[1] ∉ evtkeys, net.enable)
+    filter!(edge -> edge[1] ∉ evtkeys, net.rate)
+end
+
+
+function getplace(net::DepNetNaive, place)
+    en_events = Set(evtkey for (evtkey, placekey) in net.enable if placekey == place)
+    ra_events = Set(evtkey for (evtkey, placekey) in net.rate if placekey == place)
+    return (en=en_events, ra=ra_events)
+end

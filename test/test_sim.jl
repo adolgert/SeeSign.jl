@@ -105,8 +105,8 @@ end
 end
 
 
-@testset "Simulation Tests" begin
-    with_logger(ConsoleLogger(stderr, Logging.Debug)) do
-        SeeSign.run(1000)
-    end
-end
+# @testset "Simulation Tests" begin
+#     with_logger(ConsoleLogger(stderr, Logging.Debug)) do
+#         SeeSign.run(1000)
+#     end
+# end

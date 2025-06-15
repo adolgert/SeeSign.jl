@@ -194,7 +194,6 @@ function precondition(::Type{MoveTransition}, physical, who, direction)
     neighbor_loc = who_loc + DirectionDelta[direction]
     checkbounds(Bool, physical.board_dim, neighbor_loc) || return false
     neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
-    # Only check that the target is empty - don't read current position
     physical.board[neighbor_lin].occupant == 0
 end
 
