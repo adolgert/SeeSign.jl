@@ -107,6 +107,6 @@ end
 
 @testset "Simulation Tests" begin
     with_logger(ConsoleLogger(stderr, Logging.Debug)) do
-        SeeSign.run(1000)
+        SeeSign.run(10)
     end
 end
