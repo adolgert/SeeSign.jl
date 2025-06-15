@@ -326,18 +326,27 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
         depedges = getplace(sim.depnet, place)
         @debug "Place $place has deps $(depedges.en)"
         for clock_key in depedges.en
-            enable_func = sim.enabled_events[clock_key].enable
-            resetread(physical)
-            if !enable_func(sim.physical) # Only argument is the physical state.
+            event_data = sim.enabled_events[clock_key]
+            resetread(sim.physical)
+            # The only arg is physical state b/c the invariant is in a closure.
+            if !event_data.enable(sim.physical)
                 push!(clock_toremove, clock_key)
             else
                 # Every time we check an invariant after a state change, we must
                 # re-calculate how it depends on the state. For instance,
                 # A can move right. Then A moves down. Then A can still move
                 # right, but its moving right now depends on a different space
-                # to the right.
-                input_places = wasread(physical)
-                # XXX stop here.
+                # to the right. This is because a "move right" event is defined
+                # relative to a state, not on a specific set of places.
+                input_places = wasread(sim.physical)
+                # The EventData hasn't changed, but dependencies have.
+                begin
+                    resetread(sim.physical)
+                    # This is a re-enabling.
+                    enable(event_data.event, sim.sampler, sim.physical, sim.when, sim.rng)
+                    rate_deps = wasread(sim.physical)
+                end
+                add_event!(sim.depnet, clock_key, input_places, rate_deps)
             end
         end
     end
