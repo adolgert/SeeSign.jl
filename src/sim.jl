@@ -442,10 +442,10 @@ function check_events(sim)
             @show sim.physical
 
             if !isempty(should_be_enabled)
-                @error "Should be enabled but aren't: $(should_be_enabled)"
+                @show "Should be enabled but aren't: $(should_be_enabled)"
             end
             if !isempty(should_be_disabled)
-                @error "Are enabled but shouldn't be: $(should_be_disabled)"
+                @show "Are enabled but shouldn't be: $(should_be_disabled)"
             end
             @assert isempty(should_be_enabled) && isempty(should_be_disabled)
         end

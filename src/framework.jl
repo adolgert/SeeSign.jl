@@ -327,8 +327,17 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
         @debug "Place $place has deps $(depedges.en)"
         for clock_key in depedges.en
             enable_func = sim.enabled_events[clock_key].enable
+            resetread(physical)
             if !enable_func(sim.physical) # Only argument is the physical state.
                 push!(clock_toremove, clock_key)
+            else
+                # Every time we check an invariant after a state change, we must
+                # re-calculate how it depends on the state. For instance,
+                # A can move right. Then A moves down. Then A can still move
+                # right, but its moving right now depends on a different space
+                # to the right.
+                input_places = wasread(physical)
+                # XXX stop here.
             end
         end
     end
