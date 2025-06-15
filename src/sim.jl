@@ -278,34 +278,6 @@ function allowed_moves(physical)
 end
 
 
-"""
-I found writing the @condition macro to be complicated, so I wrote a helper
-function. The trick with the @condition macro is that it will run inside
-a begin-end block, so there is no way to short-circuit the evalutation. You can
-write code like that, but it gets complicated. This macro uses short-cicuiting
-to make it easier.
-"""
-function sick_movement(physical, who_agent, direction)
-    who_health = physical.agent[who_agent].health
-    neighbor_cart_loc = physical.agent[who_agent].loc + DirectionDelta[direction]
-    checkbounds(Bool, physical.board_dim, neighbor_cart_loc) || return (false, 0, 0)
-
-    neighbor_loc_linear = LinearIndices(physical.board_dim)[neighbor_cart_loc]
-    neighbor_agent = physical.board[neighbor_loc_linear].occupant
-    neighbor_agent > 0 || return (false, 0, 0)
-    neighbor_health = physical.agent[neighbor_agent].health
-    healths = [(who_health, who_agent), (neighbor_health, neighbor_agent)]
-    sort!(healths)
-    if healths[1][1] == Healthy && healths[2][1] == Sick
-        # Susceptible moves next to infected.
-        # The susceptible agent becomes infected.
-        move_agent(physical, who_agent, neighbor_cart_loc)
-        physical.agent[who_agent].health = Sick
-        return (true, healths[1][2], healths[2][2])
-    else
-        return (false, 0, 0)
-    end
-end
 
 
 struct InfectTransition <: BoardTransition
