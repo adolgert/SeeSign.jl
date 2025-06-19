@@ -244,6 +244,7 @@ function enable(tn::MoveTransition, sampler, physical, when, rng)
 end
 
 function reenable(tn::MoveTransition, sampler, physical, first_enabled, curtime, rng)
+    @debug "Reenable $tn"
     enable!(sampler, clock_key(tn), Weibull(1.0), first_enabled, curtime, rng)
     return nothing
 end
@@ -357,6 +358,7 @@ function enable(tn::InfectTransition, sampler, physical, when, rng)
 end
 
 function reenable(tn::InfectTransition, sampler, physical, firstenabled, curtime, rng)
+    # For exponential distributions, we don't care when it was first enabled.
     enable!(sampler, clock_key(tn), Exponential(1.0), curtime, curtime, rng)
     return nothing
 end
