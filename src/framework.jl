@@ -158,6 +158,7 @@ mutable struct SimulationFSM{State,Sampler,CK}
     rng::Xoshiro
     depnet::DependencyNetwork{CK}
     enabled_events::Dict{CK,SimTransition}
+    enabling_times::Dict{CK,Float64}
 end
 
 
@@ -169,12 +170,21 @@ function SimulationFSM(physical, sampler::SSA{CK}, rules, seed) where {CK}
         0.0,
         Xoshiro(seed),
         DependencyNetwork{CK}(),
-        Dict{CK,SimTransition}()
+        Dict{CK,SimTransition}(),
+        Dict{CK,Float64}(),
     )
 end
 
 function checksim(sim::SimulationFSM)
     @assert keys(sim.enabled_events) == keys(sim.depnet.event)
+end
+
+function rate_reenable(sim::SimulationFSM, event, clock_key)
+    resetread(sim.physical)
+    first_enable = sim.enabling_times[clock_key]
+    reenable(event, sim.sampler, sim.physical, first_enable, sim.when, sim.rng)
+    rate_deps = wasread(sim.physical)
+    return rate_deps
 end
 
 
@@ -218,12 +228,7 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
             cond_places = wasread(sim.physical)
             if cond_places != getplace(sim.depnet, check_clock_key).en
                 # Then you get new places.
-                begin
-                    resetread(sim.physical)
-                    # This is a re-enabling.
-                    enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
-                    rate_deps = wasread(sim.physical)
-                end
+                rate_deps = rate_reenable(sim, event, check_clock_key)
                 add_event!(sim.depnet, check_clock_key, cond_places, rate_deps)
                 if check_clock_key in rate_affected
                     delete!(rate_affected, check_clock_key)
@@ -233,13 +238,8 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     end
 
     for rate_clock_key in sort(collect(rate_affected))
-        begin
-            resetread(sim.physical)
-            # This is a re-enabling.
-            event = sim.enabled_events[rate_clock_key]
-            enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
-            rate_deps = wasread(sim.physical)
-        end
+        event = sim.enabled_events[rate_clock_key]
+        rate_deps = rate_reenable(sim, event, rate_clock_key)
         cond_affected = getplace(sim.depnet, place).en
         add_event!(sim.depnet, check_clock_key, cond_affected, rate_deps)
     end
@@ -258,6 +258,7 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
                 event = gen.create[evtidx]
                 evtkey = clock_key(event)
                 sim.enabled_events[evtkey] = event
+                sim.enabling_times[evtkey] = sim.when
 
                 begin
                     resetread(sim.physical)
@@ -281,6 +282,7 @@ function disable_clocks!(sim::SimulationFSM, clock_keys)
     for clock_done in clock_keys
         disable!(sim.sampler, clock_done, sim.when)
         delete!(sim.enabled_events, clock_done)
+        delete!(sim.enabling_times, clock_done)
     end
     remove_event!(sim.depnet, clock_keys)
 end
