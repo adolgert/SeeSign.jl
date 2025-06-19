@@ -182,11 +182,8 @@ abstract type BoardTransition <: SimTransition end
 struct MoveTransition <: BoardTransition
     who::Int  # An agent index.
     direction::Direction  # Direction that agent will move.
-    MoveTransition(physical, who, direction) = new(who, direction)
+    MoveTransition(who, direction) = new(who, direction)
 end
-
-# clock_key makes an immutable hash from a possibly-mutable struct for use in Dict.
-clock_key(event::MoveTransition) = (:MoveTransition, event.who, event.direction)
 
 function precondition(::Type{MoveTransition}, physical, who, direction)
     checkbounds(Bool, physical.agent, who) || return false
@@ -283,10 +280,9 @@ end
 struct InfectTransition <: BoardTransition
     infectious::Int
     susceptible::Int
-    InfectTransition(physical, infectious, susceptible) = new(infectious, susceptible)
+    InfectTransition(infectious, susceptible) = new(infectious, susceptible)
 end
 
-clock_key(it::InfectTransition) = ClockKey((:InfectTransition, it.infectious, it.susceptible))
 
 function precondition(::Type{InfectTransition}, physical, infectious, susceptible)
     return physical.agent[infectious].health == Sick &&

@@ -107,7 +107,7 @@ function transition_generate_event(gen::EventGenerator{T}, physical, place_key, 
         resetread(physical)
         if precondition(T, physical, mover, direction)
             input_places = wasread(physical)
-            transition = T(physical, mover, direction)
+            transition = T(mover, direction)
             if clock_key(transition) ∉ existing_events
                 push!(sym_create, transition)
                 push!(sym_depends, input_places)
@@ -130,6 +130,15 @@ end
 ########## The Simulation Finite State Machine (FSM)
 
 abstract type SimTransition end
+
+
+# clock_key makes an immutable hash from a possibly-mutable struct for use in Dict.
+@generated function clock_key(transition::T) where T <: SimTransition
+    type_symbol = QuoteNode(Symbol(T))
+    field_exprs = [:(transition.$field) for field in fieldnames(T)]
+    return :($type_symbol, $(field_exprs...))
+end
+
 
 generators(::Type{SimTransition}) = EventGenerator[]
 
@@ -190,12 +199,12 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     for place in changed_places
         depedges = getplace(sim.depnet, place)
         @debug "Place $place has deps $(depedges.en)"
-        for clock_key in depedges.en
-            event_data = sim.enabled_events[clock_key]
+        for check_clock_key in depedges.en
+            event_data = sim.enabled_events[check_clock_key]
             resetread(sim.physical)
             # The only arg is physical state b/c the invariant is in a closure.
             if !event_data.enable(sim.physical)
-                push!(clock_toremove, clock_key)
+                push!(clock_toremove, check_clock_key)
             else
                 # Every time we check an invariant after a state change, we must
                 # re-calculate how it depends on the state. For instance,
@@ -211,7 +220,7 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
                     enable(event_data.event, sim.sampler, sim.physical, sim.when, sim.rng)
                     rate_deps = wasread(sim.physical)
                 end
-                add_event!(sim.depnet, clock_key, input_places, rate_deps)
+                add_event!(sim.depnet, check_clock_key, input_places, rate_deps)
             end
         end
     end
