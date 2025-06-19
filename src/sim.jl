@@ -443,14 +443,10 @@ function run(event_count)
         MoveTransition,
         InfectTransition
     ]
-    event_rules = EventGenerator[]
-    for transition in included_transitions
-        append!(event_rules, generators(transition))
-    end
     sim = SimulationFSM(
         physical,
         Sampler(),
-        event_rules,
+        included_transitions,
         2947223
     )
     initialize!(sim.physical, agent_cnt, sim.rng)

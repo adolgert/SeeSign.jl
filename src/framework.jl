@@ -173,12 +173,33 @@ mutable struct SimulationFSM{State,Sampler,CK}
 end
 
 
-function SimulationFSM(physical, sampler::SSA{CK}, rules, seed) where {CK}
-    event_event_rules = Vector{EventEventGenerator}()
+function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed) where {CK}
+    event_rules = EventGenerator[]
+    event_event_rules = EventEventGenerator[]
+    not_good_rule = []
+    for transition in trans_rules
+        for rule in generators(transition)
+            if isa(rule, EventGenerator)
+                push!(event_rules, rule)
+            elseif isa(rule, EventEventGenerator)
+                push!(event_event_rules, rule)
+            else
+                push!(not_good_rule, rule)
+            end
+        end
+    end
+    if !isempty(not_good_rule)
+        @error "Could not classify as a place rule or an event rule: $(length(not_good_rule))"
+        for rule in not_good_rule
+            @error "offending rule: $rule"
+        end
+        @assert isempty(not_good_rule)
+    end
+
     return SimulationFSM{typeof(physical),typeof(sampler),CK}(
         physical,
         sampler,
-        rules,
+        event_rules,
         event_event_rules,
         0.0,
         Xoshiro(seed),
