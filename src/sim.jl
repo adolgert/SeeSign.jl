@@ -182,7 +182,6 @@ abstract type BoardTransition <: SimTransition end
 struct MoveTransition <: BoardTransition
     who::Int  # An agent index.
     direction::Direction  # Direction that agent will move.
-    MoveTransition(who, direction) = new(who, direction)
 end
 
 function precondition(::Type{MoveTransition}, physical, who, direction)
@@ -194,44 +193,50 @@ function precondition(::Type{MoveTransition}, physical, who, direction)
     physical.board[neighbor_lin].occupant == 0
 end
 
-
-"""
-An agent moved, and now there are new moves available to that agent.
-The place we watch is the location of an agent.
-"""
-function agent_moved_gen(f::Function, physical, agent_who)
-    agent_loc = physical.agent[agent_who].loc
-    for direction in keys(DirectionDelta)
-        if checkbounds(Bool, physical.board_dim, agent_loc + DirectionDelta[direction])
-            f(agent_who, direction)
-        end
-    end
-end
-
-
-"""
-The neighbor of an agent got out of its way, so now the agent can move.
-The place we watch is a board space that was previously occupied.
-"""
-function neighbor_moved_gen(f::Function, physical, board_lin)
-    board_loc = physical.board_dim[board_lin]
-    li = LinearIndices(physical.board_dim)
-    for direction in keys(DirectionDelta)
-        move_loc = board_loc + DirectionDelta[direction]
-        if checkbounds(Bool, physical.board_dim, move_loc)
-            move_lin = li[move_loc]
-            who = physical.board[move_lin].occupant
-            move_direction = DirectionOpposite[direction]
-            f(who, move_direction)
-        end
-    end
-end
-
-
-generators(::Type{MoveTransition}) = [
-    EventGenerator{MoveTransition}([:agent, ℤ, :loc], agent_moved_gen),
-    EventGenerator{MoveTransition}([:board, ℤ, :occupant], neighbor_moved_gen)
+function generators(::Type{MoveTransition})
+    return [
+        EventGenerator{MoveTransition}(
+            [:agent, ℤ, :loc],
+            # An agent moved, and now there are new moves available to that agent.
+            # The place we watch is the location of an agent.
+            function agent_moved_gen(f::Function, physical, agent_who)
+                agent_loc = physical.agent[agent_who].loc
+                for direction in keys(DirectionDelta)
+                    if checkbounds(
+                        Bool, physical.board_dim, agent_loc + DirectionDelta[direction]
+                    )
+                        f(agent_who, direction)
+                    end
+                end
+            end,
+        ),
+        EventGenerator{MoveTransition}(
+            [:board, ℤ, :occupant],
+            # The neighbor of an agent got out of its way, so now the agent can move.
+            # The place we watch is a board space that was previously occupied.
+            function neighbor_moved_gen(f::Function, physical, board_lin)
+                board_loc = physical.board_dim[board_lin]
+                li = LinearIndices(physical.board_dim)
+                for direction in keys(DirectionDelta)
+                    move_loc = board_loc + DirectionDelta[direction]
+                    if checkbounds(Bool, physical.board_dim, move_loc)
+                        move_lin = li[move_loc]
+                        who = physical.board[move_lin].occupant
+                        move_direction = DirectionOpposite[direction]
+                        f(who, move_direction)
+                    end
+                end
+            end,
+        ),
     ]
+end
+
+
+
+# generators(::Type{MoveTransition}) = [
+#     EventGenerator{MoveTransition}([:agent, ℤ, :loc], agent_moved_gen),
+#     EventGenerator{MoveTransition}([:board, ℤ, :occupant], neighbor_moved_gen)
+#     ]
 
 
 """
@@ -280,7 +285,6 @@ end
 struct InfectTransition <: BoardTransition
     infectious::Int
     susceptible::Int
-    InfectTransition(infectious, susceptible) = new(infectious, susceptible)
 end
 
 
@@ -291,62 +295,62 @@ function precondition(::Type{InfectTransition}, physical, infectious, susceptibl
 end
 
 
-function discordant_arrival(f::Function, physical, board_lin)
-    # Somebody showed up in this board location.
-    mover = physical.board[board_lin].occupant
-    mover > 0 || return
-    mover_health = physical.agent[mover].health
-    li = LinearIndices(physical.board_dim)
-    board_loc = physical.board_dim[board_lin]
-    for direction in keys(DirectionDelta)
-        # Beside them
-        neighbor_loc = board_loc + DirectionDelta[direction]
-        if checkbounds(Bool, physical.board_dim, neighbor_loc)
-            neighbor_lin = li[neighbor_loc]
-            neighbor = physical.board[neighbor_lin].occupant
-            # Was another agent.
-            if neighbor > 0
-                neighbor_health = physical.agent[neighbor].health
-                pair = [(mover_health, mover), (neighbor_health, neighbor)]
-                # They will sort into Health before Infectious
-                sort!(pair)
-                f(pair[2][2], pair[1][2])
-            end
-        end
-    end
-end
-
-
-"""
-Without anybody moving, two agents next to each other could have one become
-infected or one recover from infected to susceptible so that it could again
-become infected. Our job in this generator is to observe two neighboring
-agents, sort them according to health, and present them to the invariant
-for infection.
-"""
-function sick_in_place(f::Function, physical, sicko)
-    sick_health = physical.agent[sicko].health
-    sick_loc = physical.agent[sicko].loc
-    for direction in keys(DirectionDelta)
-        neighbor_loc = sick_loc + DirectionDelta[direction]
-        if checkbounds(Bool, physical.board_dim, neighbor_loc)
-            neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
-            neighbor = physical.board[neighbor_lin].occupant
-            if neighbor > 0
-                neighbor_health = physical.agent[neighbor].health
-                both = [(sick_health, sicko), (neighbor_health, neighbor)]
-                sort!(both)
-                f(both[2][2], both[1][2])
-            end
-        end
-    end
-end
-
-
-generators(::Type{InfectTransition}) = [
-    EventGenerator{InfectTransition}([:board, ℤ, :occupant], discordant_arrival),
-    EventGenerator{InfectTransition}([:agent, ℤ, :health], sick_in_place)
+function generators(::Type{InfectTransition})
+    return [
+        EventGenerator{InfectTransition}(
+            [:board, ℤ, :occupant],
+            # Somebody showed up in this board location.
+            function discordant_arrival(f::Function, physical, board_lin)
+                mover = physical.board[board_lin].occupant
+                mover > 0 || return
+                mover_health = physical.agent[mover].health
+                li = LinearIndices(physical.board_dim)
+                board_loc = physical.board_dim[board_lin]
+                for direction in keys(DirectionDelta)
+                    # Beside them
+                    neighbor_loc = board_loc + DirectionDelta[direction]
+                    if checkbounds(Bool, physical.board_dim, neighbor_loc)
+                        neighbor_lin = li[neighbor_loc]
+                        neighbor = physical.board[neighbor_lin].occupant
+                        # Was another agent.
+                        if neighbor > 0
+                            neighbor_health = physical.agent[neighbor].health
+                            pair = [(mover_health, mover), (neighbor_health, neighbor)]
+                            # They will sort into Health before Infectious
+                            sort!(pair)
+                            f(pair[2][2], pair[1][2])
+                        end
+                    end
+                end
+            end,
+        ),
+        EventGenerator{InfectTransition}(
+            [:agent, ℤ, :health],
+            # Without anybody moving, two agents next to each other could have one become
+            # infected or one recover from infected to susceptible so that it could again
+            # become infected. Our job in this generator is to observe two neighboring
+            # agents, sort them according to health, and present them to the invariant
+            # for infection.
+            function sick_in_place(f::Function, physical, sicko)
+                sick_health = physical.agent[sicko].health
+                sick_loc = physical.agent[sicko].loc
+                for direction in keys(DirectionDelta)
+                    neighbor_loc = sick_loc + DirectionDelta[direction]
+                    if checkbounds(Bool, physical.board_dim, neighbor_loc)
+                        neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
+                        neighbor = physical.board[neighbor_lin].occupant
+                        if neighbor > 0
+                            neighbor_health = physical.agent[neighbor].health
+                            both = [(sick_health, sicko), (neighbor_health, neighbor)]
+                            sort!(both)
+                            f(both[2][2], both[1][2])
+                        end
+                    end
+                end
+            end,
+        ),
     ]
+end
 
 function enable(tn::InfectTransition, sampler, physical, when, rng)
     enable!(sampler, clock_key(tn), Exponential(1.0), when, when, rng)
