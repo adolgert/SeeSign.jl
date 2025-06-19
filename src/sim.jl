@@ -453,7 +453,7 @@ function run(event_count)
         initialize!(init_physical, agent_cnt, sim.rng)
     end
     stop_condition = function(physical, step_idx, event, when)
-        @debug "Firing $what at $when"
+        @debug "Firing $event at $when"
         @assert isconsistent(physical) "The initial physical state is inconsistent"
         return step_idx >= event_count
     end

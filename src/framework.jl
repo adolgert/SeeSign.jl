@@ -287,8 +287,8 @@ function deal_with_changes(
     for rate_clock_key in sort(collect(rate_affected))
         event = sim.enabled_events[rate_clock_key]
         rate_deps = rate_reenable(sim, event, rate_clock_key)
-        cond_affected = getplace(sim.depnet, place).en
-        add_event!(sim.depnet, check_clock_key, cond_affected, rate_deps)
+        cond_deps = getplace(sim.depnet, rate_clock_key).en
+        add_event!(sim.depnet, rate_clock_key, cond_deps, rate_deps)
     end
 
     # Split the loop over changed_places so that the first part disables clocks
@@ -307,8 +307,10 @@ function deal_with_changes(
             end
         end
     end
+    # Process event-event rules (rules that trigger on events rather than places)
+    # Note: This may need to be adapted based on how event-event rules should work
     for evt_rule_func in sim.event_event_rules
-        gen = transition_generate_event(evt_rule_func, sim.physical, place, keys(sim.enabled_events))
+        gen = transition_generate_event(evt_rule_func, sim.physical, fired_event, keys(sim.enabled_events))
         isnothing(gen) && continue
         for evtidx in eachindex(gen.create)
             event = gen.create[evtidx]
@@ -368,7 +370,6 @@ function run(sim::SimulationFSM, initializer, stop_condition)
     should_stop = stop_condition(sim.physical, step_idx, InitializeEvent(), sim.when)
     should_stop && return
     step_idx += 1
-    check_events(sim)
     while true
         (when, what) = next(sim.sampler, sim.when, sim.rng)
         if isfinite(when) && !isnothing(what)
@@ -377,10 +378,9 @@ function run(sim::SimulationFSM, initializer, stop_condition)
             @debug "Firing $what at $when"
             fire!(sim, when, what)
         else
-            @info "No more events to process after $i iterations."
+            @info "No more events to process after $step_idx iterations."
             break
         end
-        check_events(sim)
         step_idx += 1
     end
 end
