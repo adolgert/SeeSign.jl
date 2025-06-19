@@ -150,14 +150,6 @@ end
 generators(::Type{SimTransition}) = EventGenerator[]
 
 
-struct EventData
-    # The Event object itself.
-    event::SimTransition
-    # A function that returns true if the event is enabled.
-    enable::Function
-end
-
-
 mutable struct SimulationFSM{State,Sampler,CK}
     physical::State
     sampler::Sampler
@@ -165,7 +157,7 @@ mutable struct SimulationFSM{State,Sampler,CK}
     when::Float64
     rng::Xoshiro
     depnet::DependencyNetwork{CK}
-    enabled_events::Dict{CK,EventData}
+    enabled_events::Dict{CK,SimTransition}
 end
 
 
@@ -177,7 +169,7 @@ function SimulationFSM(physical, sampler::SSA{CK}, rules, seed) where {CK}
         0.0,
         Xoshiro(seed),
         DependencyNetwork{CK}(),
-        Dict{CK,EventData}()
+        Dict{CK,SimTransition}()
     )
 end
 
@@ -208,10 +200,10 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
         depedges = getplace(sim.depnet, place)
         @debug "Place $place has deps $(depedges.en)"
         for check_clock_key in sort(collect(depedges.en))
-            event_data = sim.enabled_events[check_clock_key]
+            event = sim.enabled_events[check_clock_key]
             resetread(sim.physical)
             # The only arg is physical state b/c the invariant is in a closure.
-            if !precondition(event_data.event, sim.physical)
+            if !precondition(event, sim.physical)
                 push!(clock_toremove, check_clock_key)
             else
                 # Every time we check an invariant after a state change, we must
@@ -225,7 +217,7 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
                 begin
                     resetread(sim.physical)
                     # This is a re-enabling.
-                    enable(event_data.event, sim.sampler, sim.physical, sim.when, sim.rng)
+                    enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
                     rate_deps = wasread(sim.physical)
                 end
                 add_event!(sim.depnet, check_clock_key, input_places, rate_deps)
@@ -243,13 +235,13 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
             gen = transition_generate_event(rule_func, sim.physical, place, keys(sim.enabled_events))
             isnothing(gen) && continue
             for evtidx in eachindex(gen.create)
-                event_data = EventData(gen.create[evtidx], function(x) x end)
-                evtkey = clock_key(event_data.event)
-                sim.enabled_events[evtkey] = event_data
+                event = gen.create[evtidx]
+                evtkey = clock_key(event)
+                sim.enabled_events[evtkey] = event
 
                 begin
                     resetread(sim.physical)
-                    enable(event_data.event, sim.sampler, sim.physical, sim.when, sim.rng)
+                    enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
                     rate_deps = wasread(sim.physical)
                 end
 
@@ -277,8 +269,7 @@ end
 function fire!(sim::SimulationFSM, when, what)
     @debug "Firing $(what)"
     sim.when = when
-    whatevent = sim.enabled_events[what]
-    fire!(whatevent.event, sim.physical)
+    fire!(sim.enabled_events[what], sim.physical)
     disable_clocks!(sim, [what])
     deal_with_changes(sim)
 end
