@@ -206,13 +206,14 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     # Start  Enabled  re-enable   remove
     #       Disabled  create      nothing
     #
-    changed_places = changed(sim.physical)
+    # Sort for reproducibility run-to-run.
+    changed_places = sort(collect(changed(sim.physical)))
     @debug "Changed places $changed_places"
-    clock_toremove = Set{CK}()
+    clock_toremove = CK[]
     for place in changed_places
         depedges = getplace(sim.depnet, place)
         @debug "Place $place has deps $(depedges.en)"
-        for check_clock_key in depedges.en
+        for check_clock_key in sort(collect(depedges.en))
             event_data = sim.enabled_events[check_clock_key]
             resetread(sim.physical)
             # The only arg is physical state b/c the invariant is in a closure.
