@@ -1,16 +1,51 @@
-
+@transition MoveTransition(who::Int, direction::Direction) begin
+    @precondition(physical) begin
+        checkbounds(Bool, physical.agent, who) || return false
+        who_loc = physical.agent[who].loc
+        neighbor_loc = who_loc + DirectionDelta[direction]
+        checkbounds(Bool, physical.board_dim, neighbor_loc) || return false
+        neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
+        physical.board[neighbor_lin].occupant == 0
+    end
+end
+ 
+@generator agent_moved MoveTransition agent[i].loc begin
+    agent_loc = physical.agent[agent_who].loc
+    for direction in keys(DirectionDelta)
+        if checkbounds(Bool, physical.board_dim, agent_loc + DirectionDelta[direction])
+            f(agent_who, direction)
+        end
+    end
+end
+ 
+@generator neighbor_moved MoveTransition board[i].occupant begin
+    board_loc = physical.board_dim[board_lin]
+    li = LinearIndices(physical.board_dim)
+    for direction in keys(DirectionDelta)
+        move_loc = board_loc + DirectionDelta[direction]
+        if checkbounds(Bool, physical.board_dim, move_loc)
+            move_lin = li[move_loc]
+            who = physical.board[move_lin].occupant
+            move_direction = DirectionOpposite[direction]
+            f(who, move_direction)
+        end
+    end
+end
+ 
 ########
-
-struct MoveTransition
+# The conundrum here is that it's nice for a simulation author
+# to create transitions in terms of structs, but the structs
+# are unnecessary during runtime. They may even be detrimental
+# to performance.
+struct MoveTransition <: SimTransition
     mover::Int
     direction::Direction
-    MoveTransition(physical, mover, direction) = new(mover, direction)
 end
-
-# clock_key makes an immutable hash from a possibly-mutable struct for use in Dict.
-clock_key(event::MoveTransition) = (:MoveTransition, event.mover, event.direction)
-
-function precondition(::Type{MoveTransition}, physical, mover, direction)
+# Use @generated to convert a SimTransition to its clock_key.
+ 
+function precondition(mt::MoveTransition, physical)
+    mover = mt.mover
+    direction = mt.direction
     mover > 0 || return false
     neighbor_loc = physical.agent[mover].loc + direction
     checkbounds(Bool, physical.board_dim, neighbor_loc) || return false
@@ -18,29 +53,33 @@ function precondition(::Type{MoveTransition}, physical, mover, direction)
     physical.board[mover].occupant > 0 &&
         physical.board[neighbor_lin].occupant == 0
 end
-
-
-function move_move_gen(f::Function, physical, board_lin)
-    mover = physical.board[board_lin].occupant
-    for direction in DIRECTIONS
-        f(physical, mover, direction)
-    end
-end
-
-
-function move_change_gen(f::Function, physical, board_lin)
-    li = LinearIndices(physical.board_dim)
-    for direction in DIRECTIONS
-        move_loc = physical.board_dim[board_lin] + direction
-        if checkbounds(Bool, physical.board_dim, move_loc)
-            move_lin = li[move_loc]
-            mover = physical.board_dim[move_lin].occupant
-            move_direction = DirectionOpposite[direction]
-            f(physical, mover, move_direction)
+ 
+# methods_with_signature = filter(m -> m.sig <: Tuple{typeof(+), Int, Int}, methods(+))
+ 
+move_generators() = [
+    @generator changed(board[board_lin].occupant)
+    function(f::Function, physical, board_lin)
+        mover = physical.board[board_lin].occupant
+        for direction in DIRECTIONS
+            f(MoveTransition(mover, direction), physical)
+        end
+    end,
+ 
+    @generator changed(board[board_lin].occupant)
+    function(f::Function, physical, board_lin)
+        li = LinearIndices(physical.board_dim)
+        for direction in DIRECTIONS
+            move_loc = physical.board_dim[board_lin] + direction
+            if checkbounds(Bool, physical.board_dim, move_loc)
+                move_lin = li[move_loc]
+                mover = physical.board_dim[move_lin].occupant
+                move_direction = DirectionOpposite[direction]
+                f(physical, mover, move_direction)
+            end
         end
     end
-end
-
+]
+ 
 generators(::Type{MoveTransition}) = [
     EventGenerator{MoveTransition}([:board, Z⁺, :occupant], move_move_gen),
     EventGenerator{MoveTransition}([:board, Z⁺, :occupant], move_change_gen)
