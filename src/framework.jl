@@ -127,7 +127,7 @@ abstract type SimTransition end
 
 # clock_key makes an immutable hash from a possibly-mutable struct for use in Dict.
 @generated function clock_key(transition::T) where T <: SimTransition
-    type_symbol = QuoteNode(Symbol(T))
+    type_symbol = QuoteNode(nameof(T))
     field_exprs = [:(transition.$field) for field in fieldnames(T)]
     return :($type_symbol, $(field_exprs...))
 end
