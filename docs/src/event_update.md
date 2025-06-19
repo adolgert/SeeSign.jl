@@ -39,3 +39,9 @@ What sets of events do we have?
  * The set of those whose rates depend on ANY changed places.
 
 Let's process the data this way, not an event at a time but a set of events at a time.
+
+A question: When rules generate new events, they don't need to create existing events. If we just discovered an event is disabled, that too can be excluded. My question is whether the set of all generated events intersected with the set of enabled events is contained in the set of affected events.
+
+  (generated events) ∩ (enabled events) ⊆ (affected event preconditions)
+
+The practical answer is that there aren't restrictions on event generation. The generator functions could generate lots of extra events, so there is no guarantee that those related to the recent modified places are all we will see.
