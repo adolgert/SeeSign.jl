@@ -158,6 +158,7 @@ mutable struct SimulationFSM{State,Sampler,CK}
     rng::Xoshiro
     depnet::DependencyNetwork{CK}
     enabled_events::Dict{CK,SimTransition}
+    enabling_times::Dict{CK,Float64}
 end
 
 
@@ -169,12 +170,21 @@ function SimulationFSM(physical, sampler::SSA{CK}, rules, seed) where {CK}
         0.0,
         Xoshiro(seed),
         DependencyNetwork{CK}(),
-        Dict{CK,SimTransition}()
+        Dict{CK,SimTransition}(),
+        Dict{CK,Float64}(),
     )
 end
 
 function checksim(sim::SimulationFSM)
     @assert keys(sim.enabled_events) == keys(sim.depnet.event)
+end
+
+function rate_reenable(sim::SimulationFSM, event, clock_key)
+    resetread(sim.physical)
+    first_enable = sim.enabling_times[clock_key]
+    reenable(event, sim.sampler, sim.physical, first_enable, sim.when, sim.rng)
+    rate_deps = wasread(sim.physical)
+    return rate_deps
 end
 
 
@@ -193,37 +203,47 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     #       Disabled  create      nothing
     #
     # Sort for reproducibility run-to-run.
-    changed_places = sort(collect(changed(sim.physical)))
+    changed_places = changed(sim.physical)
     @debug "Changed places $changed_places"
     clock_toremove = CK[]
-    for place in changed_places
-        depedges = getplace(sim.depnet, place)
-        @debug "Place $place has deps $(depedges.en)"
-        for check_clock_key in sort(collect(depedges.en))
-            event = sim.enabled_events[check_clock_key]
+    cond_affected = union((getplace(sim.depnet, cp).en for cp in changed_places)...)
+    rate_affected = union((getplace(sim.depnet, cp).ra for cp in changed_places)...)
+
+    for check_clock_key in sort(collect(cond_affected))
+        event = sim.enabled_events[check_clock_key]
+        begin
             resetread(sim.physical)
-            # The only arg is physical state b/c the invariant is in a closure.
-            if !precondition(event, sim.physical)
-                push!(clock_toremove, check_clock_key)
-            else
-                # Every time we check an invariant after a state change, we must
-                # re-calculate how it depends on the state. For instance,
-                # A can move right. Then A moves down. Then A can still move
-                # right, but its moving right now depends on a different space
-                # to the right. This is because a "move right" event is defined
-                # relative to a state, not on a specific set of places.
-                input_places = wasread(sim.physical)
-                # The EventData hasn't changed, but dependencies have.
-                begin
-                    resetread(sim.physical)
-                    # This is a re-enabling.
-                    enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
-                    rate_deps = wasread(sim.physical)
+            cond_result = precondition(event, sim.physical)
+        end
+
+        if !cond_result
+            push!(clock_toremove, check_clock_key)
+        else
+            # Every time we check an invariant after a state change, we must
+            # re-calculate how it depends on the state. For instance,
+            # A can move right. Then A moves down. Then A can still move
+            # right, but its moving right now depends on a different space
+            # to the right. This is because a "move right" event is defined
+            # relative to a state, not on a specific set of places.
+            cond_places = wasread(sim.physical)
+            if cond_places != getplace(sim.depnet, check_clock_key).en
+                # Then you get new places.
+                rate_deps = rate_reenable(sim, event, check_clock_key)
+                add_event!(sim.depnet, check_clock_key, cond_places, rate_deps)
+                if check_clock_key in rate_affected
+                    delete!(rate_affected, check_clock_key)
                 end
-                add_event!(sim.depnet, check_clock_key, input_places, rate_deps)
             end
         end
     end
+
+    for rate_clock_key in sort(collect(rate_affected))
+        event = sim.enabled_events[rate_clock_key]
+        rate_deps = rate_reenable(sim, event, rate_clock_key)
+        cond_affected = getplace(sim.depnet, place).en
+        add_event!(sim.depnet, check_clock_key, cond_affected, rate_deps)
+    end
+
     # Split the loop over changed_places so that the first part disables clocks
     # and the second part creates new ones. We do this because two clocks
     # can have the SAME key but DIFFERENT dependencies. For instance, "move left"
@@ -238,6 +258,7 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
                 event = gen.create[evtidx]
                 evtkey = clock_key(event)
                 sim.enabled_events[evtkey] = event
+                sim.enabling_times[evtkey] = sim.when
 
                 begin
                     resetread(sim.physical)
@@ -261,6 +282,7 @@ function disable_clocks!(sim::SimulationFSM, clock_keys)
     for clock_done in clock_keys
         disable!(sim.sampler, clock_done, sim.when)
         delete!(sim.enabled_events, clock_done)
+        delete!(sim.enabling_times, clock_done)
     end
     remove_event!(sim.depnet, clock_keys)
 end
