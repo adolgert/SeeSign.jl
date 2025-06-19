@@ -23,3 +23,17 @@
 1. Pregeneration of all rule-based events.
 1. Transactional firing (for estimation of derivatives)
 1. HMC sampling from trajectories
+
+
+## Examples
+
+ 1. Movement and infection.
+ 1. Move, infect, age, birth.
+ 1. Policy-driven movement.
+ 1. Queuing model.
+ 1. Chemical equations.
+ 1. Drone search pattern with geometry.
+ 1. HMC for house-to-house infestation.
+ 1. Job shop problem.
+ 1. Cars driving on a map.
+ 
