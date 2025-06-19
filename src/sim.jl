@@ -2,9 +2,11 @@ import Base
 using Distributions
 using Logging
 
+# Symbol for positive integer wildcard in event generation patterns - imported from regex_tuples.jl
+
 # This will simulate agents moving on a board and infecting each other.
 
-export DirectionDelta, DirectionOpposite
+export DirectionDelta, DirectionOpposite, MoveTransition
 
 # They can move in any of four directions.
 @enum Direction NoDirection Up Left Down Right
@@ -132,7 +134,7 @@ function isconsistent(physical::BoardState)
             end
         end
     end
-    @assert seen_agents == Set(1:length(physical.agent))
+    @assert seen_agents == Set(eachindex(physical.agent))
     return true
 end
 
@@ -146,8 +148,10 @@ function move_agent(physical, agentidx, destination)
     old_board_idx = LinearIndices(physical.board_dim)[old_loc]
     new_board_idx = LinearIndices(physical.board_dim)[destination]
     
+    @assert physical.board[old_board_idx].occupant == agentidx
     physical.board[old_board_idx].occupant = 0
     physical.agent[agentidx].loc = destination
+    @assert physical.board[new_board_idx].occupant == 0
     physical.board[new_board_idx].occupant = agentidx
 end
 
@@ -157,68 +161,76 @@ function move_in_direction(physical, agentidx, direction)
     move_agent(physical, agentidx, newloc)
 end
 
+isneighbor(loca, locb) = sum(x^2 for x in (loca-locb).I) == 1
+
+"""
+Given the integer index into the linear board vector, return an iterator
+over the linear indices of neighbors that are in bounds.
+"""
+function neighbor_lin(physical, boardlin)
+    ci = physical.board_dim[boardlin]
+    li = LinearIndices(physical.board_dim)
+    return (li[ci + DirectionDelta[direction]] 
+            for direction in keys(DirectionDelta) 
+            if checkbounds(Bool, physical.board_dim, ci + DirectionDelta[direction]))
+end
+
 
 ####### transitions
 abstract type BoardTransition <: SimTransition end
 
-"""
-A dynamic generator of events. This looks at a changed place in the 
-physical state and generates clock keys for events that could
-depend on that place.
-"""
-@react tomove(physical) begin
-    @onevent changed(physical.board[loc].occupant)
-    @generate direction ∈ keys(DirectionDelta)
-    @condition begin
-        agent = physical.board[loc].occupant
-        loc_cartesian = physical.board_dim[loc]
-        new_loc = loc_cartesian + DirectionDelta[direction]
-        if checkbounds(Bool, physical.board_dim, new_loc)
-            new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
-            agent > 0 &&
-            physical.board[new_loc_linear].occupant == 0
-        else
-            false
-        end
-    end
-    @action MoveTransition(agent, direction)
-end
-
-
-"""
-This is the case where a neighbor couldn't move because it was blocked
-but now the space is free and it can move.
-"""
-@react tospace(physical) begin
-    @onevent changed(physical.board[space].occupant)
-    @generate direction ∈ keys(DirectionDelta)
-    @condition begin
-            neighbor = physical.board[space].occupant
-            loc_cartesian = physical.board_dim[space]
-            mover_loc = loc_cartesian + DirectionDelta[direction]
-            if neighbor == 0 && checkbounds(Bool, physical.board_dim, mover_loc)
-                mover_loc_linear = LinearIndices(physical.board_dim)[mover_loc]
-                mover = physical.board[mover_loc_linear].occupant
-                move_direction = DirectionOpposite[direction]
-                mover > 0
-            else
-                false
-            end
-        end
-    @action MoveTransition(mover, move_direction)
-end
-
-
-export MoveTransition, clock_key, enable, fire!, allowed_moves
-
-
 struct MoveTransition <: BoardTransition
-    who::Int
-    direction::Direction
+    who::Int  # An agent index.
+    direction::Direction  # Direction that agent will move.
 end
 
+function precondition(mt::MoveTransition, physical)
+    checkbounds(Bool, physical.agent, mt.who) || return false
+    who_loc = physical.agent[mt.who].loc
+    neighbor_loc = who_loc + DirectionDelta[mt.direction]
+    checkbounds(Bool, physical.board_dim, neighbor_loc) || return false
+    neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
+    physical.board[neighbor_lin].occupant == 0
+end
 
-clock_key(mt::MoveTransition) = ClockKey((:MoveTransition, mt.who, mt.direction))
+function generators(::Type{MoveTransition})
+    return [
+        EventGenerator{MoveTransition}(
+            [:agent, ℤ, :loc],
+            # An agent moved, and now there are new moves available to that agent.
+            # The place we watch is the location of an agent.
+            function agent_moved_gen(f::Function, physical, agent_who)
+                agent_loc = physical.agent[agent_who].loc
+                for direction in keys(DirectionDelta)
+                    if checkbounds(
+                        Bool, physical.board_dim, agent_loc + DirectionDelta[direction]
+                    )
+                        f(MoveTransition(agent_who, direction))
+                    end
+                end
+            end,
+        ),
+        EventGenerator{MoveTransition}(
+            [:board, ℤ, :occupant],
+            # The neighbor of an agent got out of its way, so now the agent can move.
+            # The place we watch is a board space that was previously occupied.
+            function neighbor_moved_gen(f::Function, physical, board_lin)
+                board_loc = physical.board_dim[board_lin]
+                li = LinearIndices(physical.board_dim)
+                for direction in keys(DirectionDelta)
+                    move_loc = board_loc + DirectionDelta[direction]
+                    if checkbounds(Bool, physical.board_dim, move_loc)
+                        move_lin = li[move_loc]
+                        who = physical.board[move_lin].occupant
+                        move_direction = DirectionOpposite[direction]
+                        f(MoveTransition(who, move_direction))
+                    end
+                end
+            end,
+        ),
+    ]
+end
+
 
 
 """
@@ -262,86 +274,6 @@ function allowed_moves(physical)
 end
 
 
-"""
-I found writing the @condition macro to be complicated, so I wrote a helper
-function. The trick with the @condition macro is that it will run inside
-a begin-end block, so there is no way to short-circuit the evalutation. You can
-write code like that, but it gets complicated. This macro uses short-cicuiting
-to make it easier.
-"""
-function sick_movement(physical, who_agent, direction)
-    who_health = physical.agent[who_agent].health
-    neighbor_cart_loc = physical.agent[who_agent].loc + DirectionDelta[direction]
-    checkbounds(Bool, physical.board_dim, neighbor_cart_loc) || return (false, 0, 0)
-
-    neighbor_loc_linear = LinearIndices(physical.board_dim)[neighbor_cart_loc]
-    neighbor_agent = physical.board[neighbor_loc_linear].occupant
-    neighbor_agent > 0 || return (false, 0, 0)
-    neighbor_health = physical.agent[neighbor_agent].health
-    healths = [(who_health, who_agent), (neighbor_health, neighbor_agent)]
-    sort!(healths)
-    if healths[1][1] == Healthy && healths[2][1] == Sick
-        # Susceptible moves next to infected.
-        # The susceptible agent becomes infected.
-        move_agent(physical, who_agent, neighbor_cart_loc)
-        physical.agent[who_agent].health = Sick
-        return (true, healths[1][2], healths[2][2])
-    else
-        return (false, 0, 0)
-    end
-end
-
-
-"""
-Let's add a process for susceptible-infected.
-There are two cases to handle that have to do with movement.
-1. Susceptible moves next to infected.
-2. Infected moves next to susceptible.
-"""
-@react toencroach(physical) begin
-    @onevent changed(physical.agent[who].loc)
-    @generate direction ∈ keys(DirectionDelta)
-    @condition begin
-            agent = physical.board[who].occupant
-            if agent > 0
-                result, susceptible, infectious = sick_movement(physical, agent, direction)
-                result
-            else
-                false
-            end
-        end
-    @action InfectTransition(infectious, susceptible)
-end
-
-
-
-"""
-This is the case where a neighbor didn't move but became infected in place
-and can therefore now infect a neighbor.
-"""
-@react tosickfriend(physical) begin
-    @onevent changed(physical.agent[who].health)
-    @generate direction ∈ keys(DirectionDelta)
-    @condition begin
-            health = physical.agent[who].health
-            neighbor_cart_loc = physical.agent[who].loc + DirectionDelta[direction]
-            if health == Sick && checkbounds(Bool, physical.board_dim, neighbor_cart_loc)
-                neighbor_loc_linear = LinearIndices(physical.board_dim)[neighbor_cart_loc]
-                neighbor = physical.board[neighbor_loc_linear].occupant
-                if neighbor > 0
-                    neighbor_health = physical.agent[neighbor].health
-                    # If the neighbor is susceptible, then it can become infected.
-                    neighbor_health == Healthy
-                else
-                    false
-                end
-            else
-                false
-            end
-        end
-    @action InfectTransition(who, neighbor)
-end
-
 
 
 struct InfectTransition <: BoardTransition
@@ -349,7 +281,70 @@ struct InfectTransition <: BoardTransition
     susceptible::Int
 end
 
-clock_key(it::InfectTransition) = ClockKey((:InfectTransition, it.infectious, it.susceptible))
+
+function precondition(it::InfectTransition, physical)
+    return physical.agent[it.infectious].health == Sick &&
+        physical.agent[it.susceptible].health == Healthy &&
+        isneighbor(physical.agent[it.infectious].loc, physical.agent[it.susceptible].loc)
+end
+
+
+function generators(::Type{InfectTransition})
+    return [
+        EventGenerator{InfectTransition}(
+            [:board, ℤ, :occupant],
+            # Somebody showed up in this board location.
+            function discordant_arrival(f::Function, physical, board_lin)
+                mover = physical.board[board_lin].occupant
+                mover > 0 || return
+                mover_health = physical.agent[mover].health
+                li = LinearIndices(physical.board_dim)
+                board_loc = physical.board_dim[board_lin]
+                for direction in keys(DirectionDelta)
+                    # Beside them
+                    neighbor_loc = board_loc + DirectionDelta[direction]
+                    if checkbounds(Bool, physical.board_dim, neighbor_loc)
+                        neighbor_lin = li[neighbor_loc]
+                        neighbor = physical.board[neighbor_lin].occupant
+                        # Was another agent.
+                        if neighbor > 0
+                            neighbor_health = physical.agent[neighbor].health
+                            pair = [(mover_health, mover), (neighbor_health, neighbor)]
+                            # They will sort into Health before Infectious
+                            sort!(pair)
+                            f(InfectTransition(pair[2][2], pair[1][2]))
+                        end
+                    end
+                end
+            end,
+        ),
+        EventGenerator{InfectTransition}(
+            [:agent, ℤ, :health],
+            # Without anybody moving, two agents next to each other could have one become
+            # infected or one recover from infected to susceptible so that it could again
+            # become infected. Our job in this generator is to observe two neighboring
+            # agents, sort them according to health, and present them to the invariant
+            # for infection.
+            function sick_in_place(f::Function, physical, sicko)
+                sick_health = physical.agent[sicko].health
+                sick_loc = physical.agent[sicko].loc
+                for direction in keys(DirectionDelta)
+                    neighbor_loc = sick_loc + DirectionDelta[direction]
+                    if checkbounds(Bool, physical.board_dim, neighbor_loc)
+                        neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
+                        neighbor = physical.board[neighbor_lin].occupant
+                        if neighbor > 0
+                            neighbor_health = physical.agent[neighbor].health
+                            both = [(sick_health, sicko), (neighbor_health, neighbor)]
+                            sort!(both)
+                            f(InfectTransition(both[2][2], both[1][2]))
+                        end
+                    end
+                end
+            end,
+        ),
+    ]
+end
 
 function enable(tn::InfectTransition, sampler, physical, when, rng)
     enable!(sampler, clock_key(tn), Exponential(1.0), when, when, rng)
@@ -405,17 +400,21 @@ function check_events(sim)
     moves = allowed_moves(sim.physical)
     infects = allowed_infects(sim.physical)
     allowed_events = union(moves, infects)
-    if allowed_events != keys(sim.enabled_events)
-        not_enabled = setdiff(allowed_events, keys(sim.enabled_events))
-        not_allowed = setdiff(keys(sim.enabled_events), allowed_events)
-        if !isempty(not_enabled)
-            @error "Should be enabled $(not_enabled)"
+    enabled = keys(sim.enabled_events)
+    if allowed_events != enabled
+        should_be_enabled = setdiff(allowed_events, enabled)
+        should_be_disabled = setdiff(enabled, allowed_events)
+        if !isempty(should_be_enabled) || !isempty(should_be_disabled)
+            @show sim.physical
+
+            if !isempty(should_be_enabled)
+                @show "Should be enabled but aren't: $(should_be_enabled)"
+            end
+            if !isempty(should_be_disabled)
+                @show "Are enabled but shouldn't be: $(should_be_disabled)"
+            end
+            @assert isempty(should_be_enabled) && isempty(should_be_disabled)
         end
-        if !isempty(not_allowed)
-            @error "Should be allowed $(not_allowed)"
-        end
-        @show sim.physical
-        @assert isempty(not_enabled) && isempty(not_allowed)
     end
 end
 
@@ -423,17 +422,19 @@ end
 function run(event_count)
     Sampler = CombinedNextReaction{ClockKey,Float64}
     agent_cnt = 9
-    raw_board = zeros(Int, 10, 10)
+    raw_board = zeros(Int, 4, 4)
     for i in 1:agent_cnt
         raw_board[i] = i
     end
     physical = BoardState(raw_board)
-    event_rules = [
-        tomove_generate_event,
-        tospace_generate_event,
-        toencroach_generate_event,
-        tosickfriend_generate_event
+    included_transitions = [
+        MoveTransition,
+        InfectTransition
     ]
+    event_rules = EventGenerator[]
+    for transition in included_transitions
+        append!(event_rules, generators(transition))
+    end
     sim = SimulationFSM(
         physical,
         Sampler(),
@@ -455,6 +456,7 @@ function run(event_count)
             @info "No more events to process after $i iterations."
             break
         end
+        @assert isconsistent(sim.physical)
         check_events(sim)
     end
 end

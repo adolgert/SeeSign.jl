@@ -237,12 +237,3 @@ end
 function hasproperty(obj, prop::Symbol)
     return prop in fieldnames(typeof(obj))
 end
-
-"""
-    change(obj)
-
-Returns the set of fields that have been modified. Alias for changed().
-"""
-function change(obj)
-    return changed(obj)
-end

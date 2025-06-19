@@ -1,142 +1,8 @@
 using Logging
 using Random
-using CompetingClocks
+using CompetingClocks: SSA, CombinedNextReaction, enable!, disable!, next, Xoshiro
+using Distributions
 
-macro react(func_sig, body)
-    # Parse function signature: name(physical)
-    func_name = func_sig.args[1]
-    physical_param = func_sig.args[2]
-    
-    # Parse the body to extract @onevent, @generate, @condition, @action
-    macro_exprs = Dict{String, Any}()
-    
-    for stmt in body.args
-        if isa(stmt, Expr) && stmt.head == :macrocall
-            macro_name = string(stmt.args[1])
-            if macro_name in ["@onevent", "@generate", "@condition", "@action"]
-                macro_exprs[macro_name] = stmt.args[3]
-            end
-        end
-    end
-    
-    onevent_expr = get(macro_exprs, "@onevent", nothing)
-    generate_expr = get(macro_exprs, "@generate", nothing)
-    condition_expr = get(macro_exprs, "@condition", nothing)
-    action_expr = get(macro_exprs, "@action", nothing)
-    
-    # Validate all required parts are present
-    if isnothing(onevent_expr) || isnothing(generate_expr) || isnothing(condition_expr) || isnothing(action_expr)
-        error("@react macro requires @onevent, @generate, @condition, and @action")
-    end
-    
-    # Parse @onevent changed(physical.field[index].subfield)
-    # Extract the field access pattern to determine filtering logic
-    changed_expr = onevent_expr.args[2]  # The argument to changed()
-    
-    # Parse @generate var ∈ collection
-    loop_var = generate_expr.args[2]
-    loop_collection = generate_expr.args[3]
-    
-    # Generate unique variable names
-    sym_create = gensym("create")
-    sym_depends = gensym("depends") 
-    sym_enabled = gensym("enabled")
-    sym_enable_clock = gensym("enable_clock")
-    sym_array_name = gensym("array_name")
-    sym_index_value = gensym("index_value")
-    sym_struct_value = gensym("struct_value")
-    
-    # Extract field access pattern for filtering
-    field_parts = extract_field_pattern(changed_expr)
-    array_name = field_parts.array
-    index_var = field_parts.index_var
-    field_name = field_parts.field
-    
-    # Generate the function
-    func_name_generate = Symbol(string(func_name) * "_generate_event")
-    
-    quote
-        function $(func_name_generate)($(physical_param), place_key, existing_events)
-            # Parse place key
-            $(sym_array_name), $(sym_index_value), $(sym_struct_value)... = place_key
-            
-            # Filter based on the @onevent pattern
-            if $(sym_array_name) != $(QuoteNode(array_name)) || $(sym_struct_value) != ($(QuoteNode(field_name)),)
-                return nothing
-            end
-            
-            # The index variable from @onevent becomes available
-            $(index_var) = $(sym_index_value)
-            
-            # Initialize collections
-            $(sym_create) = []
-            $(sym_depends) = []
-            $(sym_enabled) = []
-            
-            # Generate loop
-            for $(loop_var) in $(loop_collection)
-                # Track reads
-                resetread($(physical_param))
-                
-                # Execute condition block
-                $(sym_enable_clock) = $(condition_expr)
-                
-                # If enabled, create the event
-                if $(sym_enable_clock)
-                    input_places = wasread($(physical_param))
-                    
-                    # Create transition from @action
-                    transition = $(action_expr)
-                    
-                    # Create enable function closure
-                    enable_func = let $(index_var) = $(sym_index_value), $(loop_var) = $(loop_var)
-                        function($(physical_param),)
-                            $(condition_expr)
-                        end
-                    end
-                    
-                    # Skip if already exists
-                    clock_key(transition) in existing_events && continue
-                    
-                    # Add to collections
-                    push!($(sym_create), transition)
-                    push!($(sym_depends), input_places)
-                    push!($(sym_enabled), enable_func)
-                end
-            end
-            
-            # Return result
-            if isempty($(sym_create))
-                return nothing
-            else
-                return (create=$(sym_create), depends=$(sym_depends), enabled=$(sym_enabled))
-            end
-        end
-    end |> esc
-end
-
-function extract_field_pattern(expr)
-    # Parse expressions like physical.board[loc].occupant or physical.agent[who].health
-    # Return (array=:board, index_var=:loc, field=:occupant)
-    
-    if expr.head == :(.)
-        # Get the field name (rightmost part)
-        field_name = expr.args[2].value
-        
-        # Get the array access part
-        array_access = expr.args[1]
-        if array_access.head == :ref
-            # physical.board[loc] -> array=:board, index_var=:loc
-            array_part = array_access.args[1]
-            index_var = array_access.args[2]
-            array_name = array_part.args[2].value  # physical.board -> :board
-            
-            return (array=array_name, index_var=index_var, field=field_name)
-        end
-    end
-    
-    error("Could not parse @onevent expression: $expr")
-end
 
 ####### The physical state is transactional.
 
@@ -212,10 +78,83 @@ function accept(physical::PhysicalState)
     return physical
 end
 
+##### Helpers for events
+
+export EventGenerator, generators
+struct EventGenerator{T}
+    matchstr::Vector{Symbol}
+    generator::Function
+end
+
+genmatch(eg::EventGenerator, place_key) = accessmatch(eg.matchstr, place_key)
+(eg::EventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
+
+
+function transition_generate_event(gen::EventGenerator{T}, physical, place_key, existing_events) where T
+    match_result = genmatch(gen, place_key)
+    isnothing(match_result) && return nothing
+    # @debug "matched $place_key"
+    
+    # Extract the first captured integer from the ℤ⁺ pattern
+    sym_index_value = match_result[1][1]
+
+    sym_create = T[]
+    sym_depends = Set{Tuple}[]
+    sym_enabled = Function[]
+
+    gen(physical, sym_index_value) do transition
+        # @debug "Direction $direction"
+        resetread(physical)
+        if precondition(transition, physical)
+            input_places = wasread(physical)
+            if clock_key(transition) ∉ existing_events
+                push!(sym_create, transition)
+                push!(sym_depends, input_places)
+                let capture_transition = transition
+                    push!(sym_enabled, function(physical)
+                        precondition(capture_transition, physical)
+                    end)
+                end
+            end
+        end
+    end
+    if isempty(sym_create)
+        return nothing
+    else
+        return (create=sym_create, depends=sym_depends, enabled=sym_enabled)
+    end
+end
+
 
 ########## The Simulation Finite State Machine (FSM)
 
 abstract type SimTransition end
+
+
+# clock_key makes an immutable hash from a possibly-mutable struct for use in Dict.
+@generated function clock_key(transition::T) where T <: SimTransition
+    type_symbol = QuoteNode(Symbol(T))
+    field_exprs = [:(transition.$field) for field in fieldnames(T)]
+    return :($type_symbol, $(field_exprs...))
+end
+
+# Takes a tuple of the form (:symbol, arg, arg) and returns an instantiation
+# of the struct named by :symbol.
+@generated function key_clock(key::Tuple)
+    type_symbol = key.parameters[1]
+    if isa(type_symbol, Symbol)
+        struct_type = eval(type_symbol)
+        field_count = fieldcount(struct_type)
+        field_exprs = [:(key[$(i+1)]) for i in 1:field_count]
+        return :($struct_type($(field_exprs...)))
+    else
+        return :(error("First element of tuple must be a Symbol"))
+    end
+end
+
+
+generators(::Type{SimTransition}) = EventGenerator[]
+
 
 struct EventData
     # The Event object itself.
@@ -228,7 +167,7 @@ end
 mutable struct SimulationFSM{State,Sampler,CK}
     physical::State
     sampler::Sampler
-    event_rules::Vector{Function}
+    event_rules::Vector{EventGenerator}
     when::Float64
     rng::Xoshiro
     depnet::DependencyNetwork{CK}
@@ -249,9 +188,7 @@ function SimulationFSM(physical, sampler::SSA{CK}, rules, seed) where {CK}
 end
 
 function checksim(sim::SimulationFSM)
-    sim_clocks = keys(sim.enabled_events)
-    dep_clocks = keys(sim.depnet.event)
-    @assert sim_clocks == dep_clocks
+    @assert keys(sim.enabled_events) == keys(sim.depnet.event)
 end
 
 
@@ -269,14 +206,35 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     # Start  Enabled  re-enable   remove
     #       Disabled  create      nothing
     #
-    changed_places = changed(sim.physical)
-    clock_toremove = Set{CK}()
+    # Sort for reproducibility run-to-run.
+    changed_places = sort(collect(changed(sim.physical)))
+    @debug "Changed places $changed_places"
+    clock_toremove = CK[]
     for place in changed_places
         depedges = getplace(sim.depnet, place)
-        for clock_key in depedges.en
-            enable_func = sim.enabled_events[clock_key].enable
-            if !enable_func(sim.physical)
-                push!(clock_toremove, clock_key)
+        @debug "Place $place has deps $(depedges.en)"
+        for check_clock_key in sort(collect(depedges.en))
+            event_data = sim.enabled_events[check_clock_key]
+            resetread(sim.physical)
+            # The only arg is physical state b/c the invariant is in a closure.
+            if !event_data.enable(sim.physical)
+                push!(clock_toremove, check_clock_key)
+            else
+                # Every time we check an invariant after a state change, we must
+                # re-calculate how it depends on the state. For instance,
+                # A can move right. Then A moves down. Then A can still move
+                # right, but its moving right now depends on a different space
+                # to the right. This is because a "move right" event is defined
+                # relative to a state, not on a specific set of places.
+                input_places = wasread(sim.physical)
+                # The EventData hasn't changed, but dependencies have.
+                begin
+                    resetread(sim.physical)
+                    # This is a re-enabling.
+                    enable(event_data.event, sim.sampler, sim.physical, sim.when, sim.rng)
+                    rate_deps = wasread(sim.physical)
+                end
+                add_event!(sim.depnet, check_clock_key, input_places, rate_deps)
             end
         end
     end
@@ -287,9 +245,8 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     disable_clocks!(sim, clock_toremove)
 
     for place in changed_places
-        # It's possible this should pass in the set of all existing events.
         for rule_func in sim.event_rules
-            gen = rule_func(sim.physical, place, keys(sim.enabled_events))
+            gen = transition_generate_event(rule_func, sim.physical, place, keys(sim.enabled_events))
             isnothing(gen) && continue
             for evtidx in eachindex(gen.create)
                 event_data = EventData(gen.create[evtidx], gen.enabled[evtidx])
@@ -313,6 +270,7 @@ end
 
 
 function disable_clocks!(sim::SimulationFSM, clock_keys)
+    isempty(clock_keys) && return
     @debug "Disable clock $(clock_keys)"
     for clock_done in clock_keys
         disable!(sim.sampler, clock_done, sim.when)
@@ -323,6 +281,7 @@ end
 
 
 function fire!(sim::SimulationFSM, when, what)
+    @debug "Firing $(what)"
     sim.when = when
     whatevent = sim.enabled_events[what]
     fire!(whatevent.event, sim.physical)
