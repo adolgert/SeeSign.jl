@@ -344,9 +344,43 @@ function fire!(sim::SimulationFSM, when, what)
 end
 
 
+"""
+Initialize the simulation. You could call it as a do-function.
+It is structured this way so that the simulation will record changes to the
+physical state.
+```
+    initialize!(sim) do init_physical
+        initialize!(init_physical, agent_cnt, sim.rng)
+    end
+```
+"""
 function initialize!(callback::Function, sim::SimulationFSM)
     accept(sim.physical)
     callback(sim.physical)
     changed_places = changed(sim.physical)
     deal_with_changes(sim, InitializeEvent(), changed_places)
+end
+
+
+function run(sim::SimulationFSM, initializer, stop_condition)
+    step_idx = 0
+    initialize!(initializer, sim)
+    should_stop = stop_condition(sim.physical, step_idx, InitializeEvent(), sim.when)
+    should_stop && return
+    step_idx += 1
+    check_events(sim)
+    while true
+        (when, what) = next(sim.sampler, sim.when, sim.rng)
+        if isfinite(when) && !isnothing(what)
+            should_stop = stop_condition(sim.physical, step_idx, what, when)
+            should_stop && break
+            @debug "Firing $what at $when"
+            fire!(sim, when, what)
+        else
+            @info "No more events to process after $i iterations."
+            break
+        end
+        check_events(sim)
+        step_idx += 1
+    end
 end

@@ -449,23 +449,13 @@ function run(event_count)
         included_transitions,
         2947223
     )
-    initialize!(sim) do init_physical
+    initializer = function(init_physical)
         initialize!(init_physical, agent_cnt, sim.rng)
     end
-    @assert isconsistent(sim.physical) "The initial physical state is inconsistent"
-    check_events(sim)
-    @assert isconsistent(sim.physical)
-    for i in 1:event_count
-        (when, what) = next(sim.sampler, sim.when, sim.rng)
-        if isfinite(when) && !isnothing(what)
-            @debug "Firing $what at $when"
-            fire!(sim, when, what)
-            @assert isconsistent(sim.physical)
-        else
-            @info "No more events to process after $i iterations."
-            break
-        end
-        @assert isconsistent(sim.physical)
-        check_events(sim)
+    stop_condition = function(physical, step_idx, event, when)
+        @debug "Firing $what at $when"
+        @assert isconsistent(physical) "The initial physical state is inconsistent"
+        return step_idx >= event_count
     end
+    run(sim, initializer, stop_condition)
 end
