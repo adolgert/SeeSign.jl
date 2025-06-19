@@ -96,7 +96,7 @@ struct EventEventGenerator
     generator::Function
 end
 
-genmatch(eg::EventEventGenerator, event_key) = (event_key[1] == eg.matchstr[1] ? event_key[2:end] : nothing)
+genmatch(eg::EventEventGenerator, event_key) = (event_key[1] == eg.matchstr[1] ? (event_key[2:end],) : nothing)
 (eg::EventEventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
 
 
@@ -133,7 +133,7 @@ end
 ########## The Simulation Finite State Machine (FSM)
 
 abstract type SimTransition end
-
+struct InitializeEvent <: SimTransition end
 
 # clock_key makes an immutable hash from a possibly-mutable struct for use in Dict.
 @generated function clock_key(transition::T) where T <: SimTransition
@@ -221,6 +221,19 @@ function rate_reenable(sim::SimulationFSM, event, clock_key)
     return rate_deps
 end
 
+function enable_new_event!(sim::SimulationFSM, event, cond_deps)
+    evtkey = clock_key(event)
+    sim.enabled_events[evtkey] = event
+    sim.enabling_times[evtkey] = sim.when
+    
+    resetread(sim.physical)
+    enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
+    rate_deps = wasread(sim.physical)
+    
+    @debug "Evtkey $(evtkey) with enable deps $(cond_deps) rate deps $(rate_deps)"
+    add_event!(sim.depnet, evtkey, cond_deps, rate_deps)
+end
+
 
 """
     deal_with_changes(sim::SimulationFSM)
@@ -228,7 +241,9 @@ end
 An event changed the state. This function modifies events
 to respond to changes in state.
 """
-function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sampler,CK}
+function deal_with_changes(
+    sim::SimulationFSM{State,Sampler,CK}, fired_event, changed_places
+    ) where {State,Sampler,CK}
     # This function starts with enabled events. It ends with enabled events.
     # Let's look at just those events that depend on changed places.
     #                      Finish
@@ -237,8 +252,6 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     #       Disabled  create      nothing
     #
     # Sort for reproducibility run-to-run.
-    changed_places = changed(sim.physical)
-    @debug "Changed places $changed_places"
     clock_toremove = CK[]
     cond_affected = union((getplace(sim.depnet, cp).en for cp in changed_places)...)
     rate_affected = union((getplace(sim.depnet, cp).ra for cp in changed_places)...)
@@ -290,19 +303,16 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
             isnothing(gen) && continue
             for evtidx in eachindex(gen.create)
                 event = gen.create[evtidx]
-                evtkey = clock_key(event)
-                sim.enabled_events[evtkey] = event
-                sim.enabling_times[evtkey] = sim.when
-
-                begin
-                    resetread(sim.physical)
-                    enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
-                    rate_deps = wasread(sim.physical)
-                end
-
-                @debug "Evtkey $(evtkey) with enable deps $(gen.depends[evtidx]) rate deps $(rate_deps)"
-                add_event!(sim.depnet, evtkey, gen.depends[evtidx], rate_deps)
+                enable_new_event!(sim, event, gen.depends[evtidx])
             end
+        end
+    end
+    for evt_rule_func in sim.event_event_rules
+        gen = transition_generate_event(evt_rule_func, sim.physical, place, keys(sim.enabled_events))
+        isnothing(gen) && continue
+        for evtidx in eachindex(gen.create)
+            event = gen.create[evtidx]
+            enable_new_event!(sim, event, gen.depends[evtidx])
         end
     end
     accept(sim.physical)
@@ -325,7 +335,18 @@ end
 function fire!(sim::SimulationFSM, when, what)
     @debug "Firing $(what)"
     sim.when = when
-    fire!(sim.enabled_events[what], sim.physical)
+    event = sim.enabled_events[what]
+    fire!(event, sim.physical)
+    changed_places = changed(sim.physical)
+    @debug "Changed places $changed_places"
     disable_clocks!(sim, [what])
-    deal_with_changes(sim)
+    deal_with_changes(sim, event, changed_places)
+end
+
+
+function initialize!(callback::Function, sim::SimulationFSM)
+    accept(sim.physical)
+    callback(sim.physical)
+    changed_places = changed(sim.physical)
+    deal_with_changes(sim, InitializeEvent(), changed_places)
 end

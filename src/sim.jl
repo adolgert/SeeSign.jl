@@ -449,9 +449,10 @@ function run(event_count)
         included_transitions,
         2947223
     )
-    initialize!(sim.physical, agent_cnt, sim.rng)
+    initialize!(sim) do init_physical
+        initialize!(init_physical, agent_cnt, sim.rng)
+    end
     @assert isconsistent(sim.physical) "The initial physical state is inconsistent"
-    deal_with_changes(sim)
     check_events(sim)
     @assert isconsistent(sim.physical)
     for i in 1:event_count
