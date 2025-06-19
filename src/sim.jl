@@ -233,12 +233,6 @@ end
 
 
 
-# generators(::Type{MoveTransition}) = [
-#     EventGenerator{MoveTransition}([:agent, ℤ, :loc], agent_moved_gen),
-#     EventGenerator{MoveTransition}([:board, ℤ, :occupant], neighbor_moved_gen)
-#     ]
-
-
 """
 This function decides the rate of the transition, but whether the transition
 is enabled was already decided by the @condition in the macro. That same
