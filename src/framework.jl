@@ -193,37 +193,57 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
     #       Disabled  create      nothing
     #
     # Sort for reproducibility run-to-run.
-    changed_places = sort(collect(changed(sim.physical)))
+    changed_places = changed(sim.physical)
     @debug "Changed places $changed_places"
     clock_toremove = CK[]
-    for place in changed_places
-        depedges = getplace(sim.depnet, place)
-        @debug "Place $place has deps $(depedges.en)"
-        for check_clock_key in sort(collect(depedges.en))
-            event = sim.enabled_events[check_clock_key]
+    cond_affected = union((getplace(sim.depnet, cp).en for cp in changed_places)...)
+    rate_affected = union((getplace(sim.depnet, cp).ra for cp in changed_places)...)
+
+    for check_clock_key in sort(collect(cond_affected))
+        event = sim.enabled_events[check_clock_key]
+        begin
             resetread(sim.physical)
-            # The only arg is physical state b/c the invariant is in a closure.
-            if !precondition(event, sim.physical)
-                push!(clock_toremove, check_clock_key)
-            else
-                # Every time we check an invariant after a state change, we must
-                # re-calculate how it depends on the state. For instance,
-                # A can move right. Then A moves down. Then A can still move
-                # right, but its moving right now depends on a different space
-                # to the right. This is because a "move right" event is defined
-                # relative to a state, not on a specific set of places.
-                input_places = wasread(sim.physical)
-                # The EventData hasn't changed, but dependencies have.
+            cond_result = precondition(event, sim.physical)
+        end
+
+        if !cond_result
+            push!(clock_toremove, check_clock_key)
+        else
+            # Every time we check an invariant after a state change, we must
+            # re-calculate how it depends on the state. For instance,
+            # A can move right. Then A moves down. Then A can still move
+            # right, but its moving right now depends on a different space
+            # to the right. This is because a "move right" event is defined
+            # relative to a state, not on a specific set of places.
+            cond_places = wasread(sim.physical)
+            if cond_places != getplace(sim.depnet, check_clock_key).en
+                # Then you get new places.
                 begin
                     resetread(sim.physical)
                     # This is a re-enabling.
                     enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
                     rate_deps = wasread(sim.physical)
                 end
-                add_event!(sim.depnet, check_clock_key, input_places, rate_deps)
+                add_event!(sim.depnet, check_clock_key, cond_places, rate_deps)
+                if check_clock_key in rate_affected
+                    delete!(rate_affected, check_clock_key)
+                end
             end
         end
     end
+
+    for rate_clock_key in sort(collect(rate_affected))
+        begin
+            resetread(sim.physical)
+            # This is a re-enabling.
+            event = sim.enabled_events[rate_clock_key]
+            enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
+            rate_deps = wasread(sim.physical)
+        end
+        cond_affected = getplace(sim.depnet, place).en
+        add_event!(sim.depnet, check_clock_key, cond_affected, rate_deps)
+    end
+
     # Split the loop over changed_places so that the first part disables clocks
     # and the second part creates new ones. We do this because two clocks
     # can have the SAME key but DIFFERENT dependencies. For instance, "move left"
