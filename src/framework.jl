@@ -90,6 +90,16 @@ genmatch(eg::EventGenerator, place_key) = accessmatch(eg.matchstr, place_key)
 (eg::EventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
 
 
+export EventEventGenerator
+struct EventEventGenerator
+    matchstr::Vector{Symbol}
+    generator::Function
+end
+
+genmatch(eg::EventEventGenerator, event_key) = (event_key[1] == eg.matchstr[1] ? event_key[2:end] : nothing)
+(eg::EventEventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
+
+
 function transition_generate_event(gen::EventGenerator{T}, physical, place_key, existing_events) where T
     match_result = genmatch(gen, place_key)
     isnothing(match_result) && return nothing
@@ -154,6 +164,7 @@ mutable struct SimulationFSM{State,Sampler,CK}
     physical::State
     sampler::Sampler
     event_rules::Vector{EventGenerator}
+    event_event_rules::Vector{EventEventGenerator}
     when::Float64
     rng::Xoshiro
     depnet::DependencyNetwork{CK}
@@ -163,10 +174,12 @@ end
 
 
 function SimulationFSM(physical, sampler::SSA{CK}, rules, seed) where {CK}
+    event_event_rules = Vector{EventEventGenerator}()
     return SimulationFSM{typeof(physical),typeof(sampler),CK}(
         physical,
         sampler,
         rules,
+        event_event_rules,
         0.0,
         Xoshiro(seed),
         DependencyNetwork{CK}(),

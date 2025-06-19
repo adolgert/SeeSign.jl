@@ -1,3 +1,16 @@
+
+
+export EventEventGenerator
+struct EventEventGenerator
+    matchstr::Vector{Symbol}
+    generator::Function
+end
+
+genmatch(eg::EventEventGenerator, event_key) = (event_key[1] == eg.matchstr[1] ? event_key[2:end] : nothing)
+(eg::EventEventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
+
+
+
 @transition MoveTransition(who::Int, direction::Direction) begin
     @precondition(physical) begin
         checkbounds(Bool, physical.agent, who) || return false
@@ -81,8 +94,8 @@ move_generators() = [
 ]
  
 generators(::Type{MoveTransition}) = [
-    EventGenerator{MoveTransition}([:board, Z⁺, :occupant], move_move_gen),
-    EventGenerator{MoveTransition}([:board, Z⁺, :occupant], move_change_gen)
+    EventGenerator([:board, Z⁺, :occupant], move_move_gen),
+    EventGenerator([:board, Z⁺, :occupant], move_change_gen)
     ]
 
 
