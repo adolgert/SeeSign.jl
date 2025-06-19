@@ -184,10 +184,10 @@ struct MoveTransition <: BoardTransition
     direction::Direction  # Direction that agent will move.
 end
 
-function precondition(::Type{MoveTransition}, physical, who, direction)
-    checkbounds(Bool, physical.agent, who) || return false
-    who_loc = physical.agent[who].loc
-    neighbor_loc = who_loc + DirectionDelta[direction]
+function precondition(mt::MoveTransition, physical)
+    checkbounds(Bool, physical.agent, mt.who) || return false
+    who_loc = physical.agent[mt.who].loc
+    neighbor_loc = who_loc + DirectionDelta[mt.direction]
     checkbounds(Bool, physical.board_dim, neighbor_loc) || return false
     neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
     physical.board[neighbor_lin].occupant == 0
@@ -205,7 +205,7 @@ function generators(::Type{MoveTransition})
                     if checkbounds(
                         Bool, physical.board_dim, agent_loc + DirectionDelta[direction]
                     )
-                        f(agent_who, direction)
+                        f(MoveTransition(agent_who, direction))
                     end
                 end
             end,
@@ -223,7 +223,7 @@ function generators(::Type{MoveTransition})
                         move_lin = li[move_loc]
                         who = physical.board[move_lin].occupant
                         move_direction = DirectionOpposite[direction]
-                        f(who, move_direction)
+                        f(MoveTransition(who, move_direction))
                     end
                 end
             end,
@@ -288,10 +288,10 @@ struct InfectTransition <: BoardTransition
 end
 
 
-function precondition(::Type{InfectTransition}, physical, infectious, susceptible)
-    return physical.agent[infectious].health == Sick &&
-        physical.agent[susceptible].health == Healthy &&
-        isneighbor(physical.agent[infectious].loc, physical.agent[susceptible].loc)
+function precondition(it::InfectTransition, physical)
+    return physical.agent[it.infectious].health == Sick &&
+        physical.agent[it.susceptible].health == Healthy &&
+        isneighbor(physical.agent[it.infectious].loc, physical.agent[it.susceptible].loc)
 end
 
 
@@ -318,7 +318,7 @@ function generators(::Type{InfectTransition})
                             pair = [(mover_health, mover), (neighbor_health, neighbor)]
                             # They will sort into Health before Infectious
                             sort!(pair)
-                            f(pair[2][2], pair[1][2])
+                            f(InfectTransition(pair[2][2], pair[1][2]))
                         end
                     end
                 end
@@ -343,7 +343,7 @@ function generators(::Type{InfectTransition})
                             neighbor_health = physical.agent[neighbor].health
                             both = [(sick_health, sicko), (neighbor_health, neighbor)]
                             sort!(both)
-                            f(both[2][2], both[1][2])
+                            f(InfectTransition(both[2][2], both[1][2]))
                         end
                     end
                 end

@@ -102,18 +102,17 @@ function transition_generate_event(gen::EventGenerator{T}, physical, place_key, 
     sym_depends = Set{Tuple}[]
     sym_enabled = Function[]
 
-    gen(physical, sym_index_value) do mover, direction
+    gen(physical, sym_index_value) do transition
         # @debug "Direction $direction"
         resetread(physical)
-        if precondition(T, physical, mover, direction)
+        if precondition(transition, physical)
             input_places = wasread(physical)
-            transition = T(mover, direction)
             if clock_key(transition) ∉ existing_events
                 push!(sym_create, transition)
                 push!(sym_depends, input_places)
-                let mover = mover, direction = direction
+                let capture_transition = transition
                     push!(sym_enabled, function(physical)
-                        precondition(T, physical, mover, direction)
+                        precondition(capture_transition, physical)
                     end)
                 end
             end
@@ -137,6 +136,20 @@ abstract type SimTransition end
     type_symbol = QuoteNode(Symbol(T))
     field_exprs = [:(transition.$field) for field in fieldnames(T)]
     return :($type_symbol, $(field_exprs...))
+end
+
+# Takes a tuple of the form (:symbol, arg, arg) and returns an instantiation
+# of the struct named by :symbol.
+@generated function key_clock(key::Tuple)
+    type_symbol = key.parameters[1]
+    if isa(type_symbol, Symbol)
+        struct_type = eval(type_symbol)
+        field_count = fieldcount(struct_type)
+        field_exprs = [:(key[$(i+1)]) for i in 1:field_count]
+        return :($struct_type($(field_exprs...)))
+    else
+        return :(error("First element of tuple must be a Symbol"))
+    end
 end
 
 
