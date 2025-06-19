@@ -4,6 +4,7 @@ authors = ["Andrew Dolgert <github@dolgert.com>"]
 version = "1.0.0-DEV"
 
 [deps]
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 CompetingClocks = "5bb9b785-358c-4fee-af0f-b94a146244a8"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
@@ -15,6 +16,7 @@ TestEnv = "1e6cf692-eddd-4d53-88a5-2d735e33781b"
 Z3 = "06b161dc-0161-11ea-0f74-41f836f4024b"
 
 [compat]
+ArgParse = "1.2.0"
 CompetingClocks = "0.1.0"
 Distributions = "0.25.120"
 Logging = "1.11.0"

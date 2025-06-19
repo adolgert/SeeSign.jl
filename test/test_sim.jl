@@ -87,9 +87,9 @@ end
         @test (:board, place_idx, :occupant) ∉ dep
         @test place ∈ dep
         @test length(dep) == 2
-        @show dep
+        @debug "dep $dep"
         remaining = pop!(setdiff(dep, [place]))
-        @show remaining
+        @debug "remaining $remaining"
         @test remaining[1] == :board
         @test remaining[3] == :occupant
     end
@@ -106,7 +106,10 @@ end
 
 
 @testset "Simulation Tests" begin
-    with_logger(ConsoleLogger(stderr, Logging.Debug)) do
-        SeeSign.run(10)
+    ci = continuous_integration()
+    log_level = ci ? Logging.Error : Logging.Info
+    run_cnt = ci ? 10 : 1000
+    with_logger(ConsoleLogger(stderr, log_level)) do
+        SeeSign.run(run_cnt)
     end
 end
