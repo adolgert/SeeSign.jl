@@ -93,15 +93,15 @@ end
         @test remaining[1] == :board
         @test remaining[3] == :occupant
     end
-    @test length(result.enabled) == move_cnt
-    for enabling in result.enabled
-        @test enabling(physical)
+    @test length(result.create) == move_cnt
+    for enable_idx in 1:move_cnt
+        @test SeeSign.precondition(result.create[enable_idx], physical)
     end
 
     ## Modify the board by putting another piece in the way.
     physical.board[LinearIndices(arr)[1, 4]].occupant = 13
     # Then one of the enabling functions should be false.
-    @test sum([enabling(physical) for enabling in result.enabled]) == move_cnt - 1
+    @test sum([SeeSign.precondition(enevt,physical) for enevt in result.create]) == move_cnt - 1
 end
 
 

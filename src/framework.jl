@@ -100,7 +100,6 @@ function transition_generate_event(gen::EventGenerator{T}, physical, place_key, 
 
     sym_create = T[]
     sym_depends = Set{Tuple}[]
-    sym_enabled = Function[]
 
     gen(physical, sym_index_value) do transition
         # @debug "Direction $direction"
@@ -110,18 +109,13 @@ function transition_generate_event(gen::EventGenerator{T}, physical, place_key, 
             if clock_key(transition) ∉ existing_events
                 push!(sym_create, transition)
                 push!(sym_depends, input_places)
-                let capture_transition = transition
-                    push!(sym_enabled, function(physical)
-                        precondition(capture_transition, physical)
-                    end)
-                end
             end
         end
     end
     if isempty(sym_create)
         return nothing
     else
-        return (create=sym_create, depends=sym_depends, enabled=sym_enabled)
+        return (create=sym_create, depends=sym_depends)
     end
 end
 
@@ -217,7 +211,7 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
             event_data = sim.enabled_events[check_clock_key]
             resetread(sim.physical)
             # The only arg is physical state b/c the invariant is in a closure.
-            if !event_data.enable(sim.physical)
+            if !precondition(event_data.event, sim.physical)
                 push!(clock_toremove, check_clock_key)
             else
                 # Every time we check an invariant after a state change, we must
@@ -249,7 +243,7 @@ function deal_with_changes(sim::SimulationFSM{State,Sampler,CK}) where {State,Sa
             gen = transition_generate_event(rule_func, sim.physical, place, keys(sim.enabled_events))
             isnothing(gen) && continue
             for evtidx in eachindex(gen.create)
-                event_data = EventData(gen.create[evtidx], gen.enabled[evtidx])
+                event_data = EventData(gen.create[evtidx], function(x) x end)
                 evtkey = clock_key(event_data.event)
                 sim.enabled_events[evtkey] = event_data
 
