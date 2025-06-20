@@ -10,7 +10,10 @@ export PhysicalState, changed, wasread, resetread, accept
 abstract type PhysicalState end
 
 """
-Used for debugging.
+    isconsistent(physical_state)
+
+A simulation in debug mode will assert `isconsistent(physical_state)` is true.
+Override this to verify the physical state of your simulation.
 """
 isconsistent(::PhysicalState) = true
 
@@ -81,6 +84,31 @@ end
 ##### Helpers for events
 
 export EventGenerator, generators
+
+"""
+    EventGenerator{TransitionType}(matchstr, generator::Function)
+
+When an event fires, it changes the physical state. The simulation observes which
+parts of the physical state changed and sends those parts to this `EventGenerator`.
+The `EventGenerator` is a rule that matches changes to the physical state and creates
+`SimTransition` that act on that physical state.
+
+The `matchstr` is a list of symbols `(array_name, ℤ, struct_member)`. The ℤ represents
+the integer index within the array. For instance, if we simulated chess, it might
+be `(:board, ℤ, :piece)`.
+
+The generator is a callback that the simulation uses to determine which events
+need to be enabled given recent changes to the state of the board. Its signature
+is:
+
+```
+    callback_function(f::Function, physical_state, indices...)
+```
+
+Here the indices are the integer index that matches the ℤ above. This callback
+function should look at the physical state and call `f(transition)` where
+`transition` is an instance of `SimTransition`.
+"""
 struct EventGenerator{T}
     matchstr::Vector{Symbol}
     generator::Function
@@ -90,7 +118,28 @@ genmatch(eg::EventGenerator, place_key) = accessmatch(eg.matchstr, place_key)
 (eg::EventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
 
 
+
 export EventEventGenerator
+
+
+"""
+    EventEventGenerator{TransitionType}(matchstr, generator::Function)
+
+This generator reacts to the last event fired instead of `EventGenerator` which
+reacts to the last places modified. In this case, the `matchstr` is a vector
+with one entry, the symbol version of the transition type it matches. For
+a transition called `MoveTransition` it would be `matchstr=[:MoveTransition]`.
+
+The generator is a callback function whose signature is:
+
+
+```
+    callback_function(f::Function, physical_state, event_members...)
+```
+
+This callback function is passed arguments that are the members of the instance
+of the transition it matched.
+"""
 struct EventEventGenerator
     matchstr::Vector{Symbol}
     generator::Function
@@ -132,18 +181,37 @@ end
 
 ########## The Simulation Finite State Machine (FSM)
 
+"""
+  SimTransition
+
+This abstract type is the parent of all transitions in the system.
+"""
 abstract type SimTransition end
+
+"""
+InitializeEvent is a concrete transition type that represents the first event
+in the system, initialization.
+"""
 struct InitializeEvent <: SimTransition end
 
-# clock_key makes an immutable hash from a possibly-mutable struct for use in Dict.
+"""
+    clock_key(::SimTransition)::Tuple
+
+All `SimTransition` objects are immutable structs that represent events but
+don't carry any mutable state. A clock key is a tuple version of an event.
+"""
 @generated function clock_key(transition::T) where T <: SimTransition
     type_symbol = QuoteNode(nameof(T))
     field_exprs = [:(transition.$field) for field in fieldnames(T)]
     return :($type_symbol, $(field_exprs...))
 end
 
-# Takes a tuple of the form (:symbol, arg, arg) and returns an instantiation
-# of the struct named by :symbol.
+"""
+    key_clock(key::Tuple)::SimTransition
+
+Takes a tuple of the form (:symbol, arg, arg) and returns an instantiation
+of the struct named by :symbol.
+"""
 @generated function key_clock(key::Tuple)
     type_symbol = key.parameters[1]
     if isa(type_symbol, Symbol)
@@ -157,7 +225,14 @@ end
 end
 
 
-generators(::Type{SimTransition}) = EventGenerator[]
+"""
+    generators(::Type{SimTransition})::Vector{Union{EventGenerator,EventEventGenerator}}
+
+Every transition in the simulation needs generators that notice changes to state
+or events fired and create the appropriate transitions. Implement a `generators`
+function as part of the interface of each transition.
+"""
+generators(::Type{SimTransition}) = Union{EventGenerator,EventEventGenerator}[]
 
 
 mutable struct SimulationFSM{State,Sampler,CK}
@@ -174,6 +249,23 @@ mutable struct SimulationFSM{State,Sampler,CK}
 end
 
 
+"""
+    SimulationFSM(physical_state, sampler, trans_rules, seed; observer=nothing)
+
+Create a simulation.
+
+The `physical_state` is of type `PhysicalState`. The sampler is of type
+`CompetingClocks.SSA`. The `trans_rules` are a list of type `SimTransition`.
+The seed is an integer seed for a `Xoshiro` random number generator. The
+observer is a callback with the signature:
+
+```
+observer(physical, when::Float64, event::SimTransition, changed_places::Set{Tuple})
+```
+
+The `changed_places` argument is a set-like object with tuples that are keys that
+represent which places were changed.
+"""
 function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed; observer=nothing) where {CK}
     event_rules = EventGenerator[]
     event_event_rules = EventEventGenerator[]
@@ -367,6 +459,22 @@ function initialize!(callback::Function, sim::SimulationFSM)
 end
 
 
+"""
+    run(simulation, initializer, stop_condition)
+
+Given a simulation, this initializes the physical state and generates a
+trajectory from the simulation until the stop condition is met. The `initializer`
+is a function whose argument is a physical state and returns nothing. The
+stop condition is a function with the signature:
+
+```
+stop_condition(physical_state, step_idx, event::SimTransition, when)::Bool
+```
+
+The event and when passed into the stop condition are the event and time that are
+about to fire but have not yet fired. This lets you enforce a stopping time that
+is between events.
+"""
 function run(sim::SimulationFSM, initializer, stop_condition)
     step_idx = 0
     initialize!(initializer, sim)
