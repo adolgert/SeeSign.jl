@@ -57,6 +57,8 @@ makedocs(;
     authors="Andrew Dolgert <github@dolgert.com>",
     sitename="SeeSign.jl",
     format=Documenter.HTML(;
+        # Turn off pretty urls because they link to directories not files
+        # and that doesn't work for browsers looking at local directories.
         prettyurls=get(ENV, "CI", nothing) == "true",
         canonical="https://adolgert.github.io/SeeSign.jl",
         edit_link="main",
@@ -71,6 +73,7 @@ makedocs(;
             "Plan" => "plan.md",
             "Event Updates" => "event_update.md",
         ],
+        "Reference" => "reference.md",
     ],
 )
 
