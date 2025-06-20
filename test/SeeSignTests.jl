@@ -13,4 +13,6 @@ include("test_depnet.jl")
 include("test_tracked.jl")
 include("test_sim.jl")
 
+retest(args...; kwargs...) = ReTest.retest(args...; kwargs...)
+
 end

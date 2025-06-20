@@ -339,13 +339,11 @@ end
 
 
 function fire!(sim::SimulationFSM, when, what)
-    @debug "Firing $(what)"
     sim.when = when
     event = sim.enabled_events[what]
     fire!(event, sim.physical)
     changed_places = changed(sim.physical)
     sim.observer(sim.physical, when, event, changed_places)
-    @debug "Changed places $changed_places"
     disable_clocks!(sim, [what])
     deal_with_changes(sim, event, changed_places)
 end
