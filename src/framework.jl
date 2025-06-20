@@ -170,10 +170,11 @@ mutable struct SimulationFSM{State,Sampler,CK}
     depnet::DependencyNetwork{CK}
     enabled_events::Dict{CK,SimTransition}
     enabling_times::Dict{CK,Float64}
+    observer
 end
 
 
-function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed) where {CK}
+function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed; observer=nothing) where {CK}
     event_rules = EventGenerator[]
     event_event_rules = EventEventGenerator[]
     not_good_rule = []
@@ -195,7 +196,9 @@ function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed) where {CK}
         end
         @assert isempty(not_good_rule)
     end
-
+    if isnothing(observer)
+        observer = (args...) -> nothing
+    end
     return SimulationFSM{typeof(physical),typeof(sampler),CK}(
         physical,
         sampler,
@@ -206,6 +209,7 @@ function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed) where {CK}
         DependencyNetwork{CK}(),
         Dict{CK,SimTransition}(),
         Dict{CK,Float64}(),
+        observer,
     )
 end
 
@@ -340,6 +344,7 @@ function fire!(sim::SimulationFSM, when, what)
     event = sim.enabled_events[what]
     fire!(event, sim.physical)
     changed_places = changed(sim.physical)
+    sim.observer(sim.physical, when, event, changed_places)
     @debug "Changed places $changed_places"
     disable_clocks!(sim, [what])
     deal_with_changes(sim, event, changed_places)
