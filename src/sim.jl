@@ -431,6 +431,22 @@ function check_events(sim)
 end
 
 
+struct TrajectoryEntry
+    event::Tuple
+    when::Float64
+end
+
+struct TrajectorySave
+    trajectory::Vector{TrajectoryEntry}
+    TrajectorySave() = new(Vector{TrajectoryEntry}())
+end
+
+function observe(te::TrajectoryEntry, physical, when, event, changed_places)
+    @debug "Firing $event at $when"
+    push!(te.trajectory, TrajectoryEntry(clock_key(event), when))
+end
+
+
 function run(event_count)
     Sampler = CombinedNextReaction{ClockKey,Float64}
     agent_cnt = 9
@@ -449,23 +465,14 @@ function run(event_count)
         included_transitions,
         2947223
     )
-    initialize!(sim) do init_physical
+    initializer = function(init_physical)
         initialize!(init_physical, agent_cnt, sim.rng)
     end
-    @assert isconsistent(sim.physical) "The initial physical state is inconsistent"
-    check_events(sim)
-    @assert isconsistent(sim.physical)
-    for i in 1:event_count
-        (when, what) = next(sim.sampler, sim.when, sim.rng)
-        if isfinite(when) && !isnothing(what)
-            @debug "Firing $what at $when"
-            fire!(sim, when, what)
-            @assert isconsistent(sim.physical)
-        else
-            @info "No more events to process after $i iterations."
-            break
-        end
-        @assert isconsistent(sim.physical)
-        check_events(sim)
+    # Stop-condition is called after the next event is chosen but before the
+    # next event is fired. This way you can stop at an end time between events.
+    stop_condition = function(physical, step_idx, event, when)
+        @assert isconsistent(physical) "The initial physical state is inconsistent"
+        return step_idx >= event_count
     end
+    run(sim, initializer, stop_condition)
 end

@@ -170,10 +170,11 @@ mutable struct SimulationFSM{State,Sampler,CK}
     depnet::DependencyNetwork{CK}
     enabled_events::Dict{CK,SimTransition}
     enabling_times::Dict{CK,Float64}
+    observer
 end
 
 
-function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed) where {CK}
+function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed; observer=nothing) where {CK}
     event_rules = EventGenerator[]
     event_event_rules = EventEventGenerator[]
     not_good_rule = []
@@ -195,7 +196,9 @@ function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed) where {CK}
         end
         @assert isempty(not_good_rule)
     end
-
+    if isnothing(observer)
+        observer = (args...) -> nothing
+    end
     return SimulationFSM{typeof(physical),typeof(sampler),CK}(
         physical,
         sampler,
@@ -206,6 +209,7 @@ function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed) where {CK}
         DependencyNetwork{CK}(),
         Dict{CK,SimTransition}(),
         Dict{CK,Float64}(),
+        observer,
     )
 end
 
@@ -287,8 +291,8 @@ function deal_with_changes(
     for rate_clock_key in sort(collect(rate_affected))
         event = sim.enabled_events[rate_clock_key]
         rate_deps = rate_reenable(sim, event, rate_clock_key)
-        cond_affected = getplace(sim.depnet, place).en
-        add_event!(sim.depnet, check_clock_key, cond_affected, rate_deps)
+        cond_deps = getplace(sim.depnet, rate_clock_key).en
+        add_event!(sim.depnet, rate_clock_key, cond_deps, rate_deps)
     end
 
     # Split the loop over changed_places so that the first part disables clocks
@@ -307,8 +311,10 @@ function deal_with_changes(
             end
         end
     end
+    # Process event-event rules (rules that trigger on events rather than places)
+    # Note: This may need to be adapted based on how event-event rules should work
     for evt_rule_func in sim.event_event_rules
-        gen = transition_generate_event(evt_rule_func, sim.physical, place, keys(sim.enabled_events))
+        gen = transition_generate_event(evt_rule_func, sim.physical, fired_event, keys(sim.enabled_events))
         isnothing(gen) && continue
         for evtidx in eachindex(gen.create)
             event = gen.create[evtidx]
@@ -333,20 +339,51 @@ end
 
 
 function fire!(sim::SimulationFSM, when, what)
-    @debug "Firing $(what)"
     sim.when = when
     event = sim.enabled_events[what]
     fire!(event, sim.physical)
     changed_places = changed(sim.physical)
-    @debug "Changed places $changed_places"
+    sim.observer(sim.physical, when, event, changed_places)
     disable_clocks!(sim, [what])
     deal_with_changes(sim, event, changed_places)
 end
 
 
+"""
+Initialize the simulation. You could call it as a do-function.
+It is structured this way so that the simulation will record changes to the
+physical state.
+```
+    initialize!(sim) do init_physical
+        initialize!(init_physical, agent_cnt, sim.rng)
+    end
+```
+"""
 function initialize!(callback::Function, sim::SimulationFSM)
     accept(sim.physical)
     callback(sim.physical)
     changed_places = changed(sim.physical)
     deal_with_changes(sim, InitializeEvent(), changed_places)
+end
+
+
+function run(sim::SimulationFSM, initializer, stop_condition)
+    step_idx = 0
+    initialize!(initializer, sim)
+    should_stop = stop_condition(sim.physical, step_idx, InitializeEvent(), sim.when)
+    should_stop && return
+    step_idx += 1
+    while true
+        (when, what) = next(sim.sampler, sim.when, sim.rng)
+        if isfinite(when) && !isnothing(what)
+            should_stop = stop_condition(sim.physical, step_idx, what, when)
+            should_stop && break
+            @debug "Firing $what at $when"
+            fire!(sim, when, what)
+        else
+            @info "No more events to process after $step_idx iterations."
+            break
+        end
+        step_idx += 1
+    end
 end

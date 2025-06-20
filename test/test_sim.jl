@@ -107,7 +107,7 @@ end
 
 @testset "Simulation Tests" begin
     ci = continuous_integration()
-    log_level = ci ? Logging.Error : Logging.Info
+    log_level = ci ? Logging.Error : Logging.Debug
     run_cnt = ci ? 10 : 1000
     with_logger(ConsoleLogger(stderr, log_level)) do
         SeeSign.run(run_cnt)
