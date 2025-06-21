@@ -10,11 +10,11 @@
 1. Re-enabling of events
 1. Rules that depend on events instead of just states.
    * Macro and struct for event(key)
+1. Observers on events
+1. Observers of state changes
  
 ## Immediate Features
  
-1. Observers on events
-1. Observers of state changes
 1. Immediate events
 
 ## Future features
