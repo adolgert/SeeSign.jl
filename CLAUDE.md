@@ -9,3 +9,5 @@ You are new to Julia. Here are differences between Julia and Python.
 
 For this repository, please limit comments to "WHY code is written this way". If the code is self-explanatory, you can leave it uncommented.
 
+Run tests with: `cd $HOME/dev/SeeSign.jl && julia --project=. test/runtests.jl "<string match for test>"
+If you exclude the string match, all tests will run.
