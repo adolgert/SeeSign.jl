@@ -1,6 +1,34 @@
 using Logging
 
 export PhysicalState, changed, wasread, resetread, accept
+
+"""
+`PhysicalState` is an abstract type from which to inherit the state of a simulation.
+A `PhysicalState` should put all mutable values, the values upon which events
+depend, into `TrackedVector` objects. For instance:
+
+```
+@tracked_struct Square begin
+    occupant::Int
+    resistance::Float64
+end
+
+
+# Everything we know about an agent.
+@tracked_struct Agent begin
+    health::Health
+    loc::CartesianIndex{2}
+end
+
+mutable struct BoardState <: PhysicalState
+    board::TrackedVector{Square}
+    agent::TrackedVector{Agent}
+end
+```
+
+The `PhysicalState` may contain other properties, but those defined with
+`TrackedVectors` are used to compute the next event in the simulation.
+"""
 abstract type PhysicalState end
 
 """
@@ -76,6 +104,13 @@ function accept(physical::PhysicalState)
 end
 
 
+"""
+    capture_state_changes(f::Function, physical_state)
+
+The callback function `f` will modify the physical state. This function
+records which parts of the state were modified. The callback should have
+no arguments and may return a result.
+"""
 function capture_state_changes(f::Function, physical)
     accept(physical)
     result = f()
@@ -84,6 +119,13 @@ function capture_state_changes(f::Function, physical)
 end
 
 
+"""
+    capture_state_reads(f::Function, physical_state)
+
+The callback function `f` will read the physical state. This function
+records which parts of the state were read. The callback should have
+no arguments and may return a result.
+"""
 function capture_state_reads(f::Function, physical)
     resetread(physical)
     result = f()

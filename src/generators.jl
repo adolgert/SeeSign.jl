@@ -118,9 +118,10 @@ function transition_immediate_event(gen::ImmediateEventGenerator, physical, plac
         # @debug "Direction $direction"
         if transition ∉ existing_events && precondition(transition, physical)
             push!(existing_events, transition)
-            accept(physical)
-            fire!(transition, physical)
-            push!(changed_places, changed(physical))
+            ans = capture_state_changes(physical) do
+                fire!(transition, physical)
+            end
+            push!(changed_places, ans.changes)
         end
     end
     return changed_places
