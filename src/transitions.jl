@@ -1,32 +1,32 @@
 using Logging
 
 """
-  SimTransition
+  SimEvent
 
 This abstract type is the parent of all transitions in the system.
 """
-abstract type SimTransition end
+abstract type SimEvent end
 
 """
 InitializeEvent is a concrete transition type that represents the first event
 in the system, initialization.
 """
-struct InitializeEvent <: SimTransition end
+struct InitializeEvent <: SimEvent end
 
 """
-    clock_key(::SimTransition)::Tuple
+    clock_key(::SimEvent)::Tuple
 
-All `SimTransition` objects are immutable structs that represent events but
+All `SimEvent` objects are immutable structs that represent events but
 don't carry any mutable state. A clock key is a tuple version of an event.
 """
-@generated function clock_key(transition::T) where T <: SimTransition
+@generated function clock_key(transition::T) where T <: SimEvent
     type_symbol = QuoteNode(nameof(T))
     field_exprs = [:(transition.$field) for field in fieldnames(T)]
     return :($type_symbol, $(field_exprs...))
 end
 
 """
-    key_clock(key::Tuple)::SimTransition
+    key_clock(key::Tuple)::SimEvent
 
 Takes a tuple of the form (:symbol, arg, arg) and returns an instantiation
 of the struct named by :symbol.

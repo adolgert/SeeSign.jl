@@ -10,7 +10,7 @@ export EventGenerator, generators
 When an event fires, it changes the physical state. The simulation observes which
 parts of the physical state changed and sends those parts to this `EventGenerator`.
 The `EventGenerator` is a rule that matches changes to the physical state and creates
-`SimTransition` that act on that physical state.
+`SimEvent` that act on that physical state.
 
 The `matchstr` is a list of symbols `(array_name, ℤ, struct_member)`. The ℤ represents
 the integer index within the array. For instance, if we simulated chess, it might
@@ -26,7 +26,7 @@ is:
 
 Here the indices are the integer index that matches the ℤ above. This callback
 function should look at the physical state and call `f(transition)` where
-`transition` is an instance of `SimTransition`.
+`transition` is an instance of `SimEvent`.
 """
 struct EventGenerator{T}
     matchstr::Vector{Symbol}
@@ -76,7 +76,7 @@ function transition_generate_event(gen, physical, place_key, existing_events)
     # Extract the first captured integer from the ℤ⁺ pattern
     sym_index_value = match_result[1][1]
 
-    sym_create = SimTransition[]
+    sym_create = SimEvent[]
     sym_depends = Set{Tuple}[]
 
     gen(physical, sym_index_value) do transition
@@ -129,10 +129,10 @@ end
 
 
 """
-    generators(::Type{SimTransition})::Vector{Union{EventGenerator,EventEventGenerator}}
+    generators(::Type{SimEvent})::Vector{Union{EventGenerator,EventEventGenerator}}
 
 Every transition in the simulation needs generators that notice changes to state
 or events fired and create the appropriate transitions. Implement a `generators`
 function as part of the interface of each transition.
 """
-generators(::Type{SimTransition}) = Union{EventGenerator,EventEventGenerator}[]
+generators(::Type{SimEvent}) = Union{EventGenerator,EventEventGenerator}[]

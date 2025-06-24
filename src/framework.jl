@@ -16,7 +16,7 @@ mutable struct SimulationFSM{State,Sampler,CK}
     when::Float64
     rng::Xoshiro
     depnet::DependencyNetwork{CK}
-    enabled_events::Dict{CK,SimTransition}
+    enabled_events::Dict{CK,SimEvent}
     enabling_times::Dict{CK,Float64}
     observer
 end
@@ -28,12 +28,12 @@ end
 Create a simulation.
 
 The `physical_state` is of type `PhysicalState`. The sampler is of type
-`CompetingClocks.SSA`. The `trans_rules` are a list of type `SimTransition`.
+`CompetingClocks.SSA`. The `trans_rules` are a list of type `SimEvent`.
 The seed is an integer seed for a `Xoshiro` random number generator. The
 observer is a callback with the signature:
 
 ```
-observer(physical, when::Float64, event::SimTransition, changed_places::Set{Tuple})
+observer(physical, when::Float64, event::SimEvent, changed_places::Set{Tuple})
 ```
 
 The `changed_places` argument is a set-like object with tuples that are keys that
@@ -85,7 +85,7 @@ function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed; observer=n
         0.0,
         Xoshiro(seed),
         DependencyNetwork{CK}(),
-        Dict{CK,SimTransition}(),
+        Dict{CK,SimEvent}(),
         Dict{CK,Float64}(),
         observer,
     )
@@ -105,7 +105,7 @@ function rate_reenable(sim::SimulationFSM, event, clock_key)
 end
 
 function generate_new_events(sim::SimulationFSM, changed_places, fired_event)
-    new_events = Tuple{SimTransition,Set{Tuple}}[]
+    new_events = Tuple{SimEvent,Set{Tuple}}[]
     
     # Process place-based rules
     for place in changed_places
@@ -239,7 +239,7 @@ function fire!(sim::SimulationFSM, when, what)
     end
     changed_places = changes_result.changes
     
-    seen_immediate = SimTransition[]
+    seen_immediate = SimEvent[]
     for immediate in sim.immediate_rules
         more_places = transition_immediate_event(immediate, sim.physical, what, seen_immediate)
         union!(changed_places, more_places)
@@ -277,7 +277,7 @@ is a function whose argument is a physical state and returns nothing. The
 stop condition is a function with the signature:
 
 ```
-stop_condition(physical_state, step_idx, event::SimTransition, when)::Bool
+stop_condition(physical_state, step_idx, event::SimEvent, when)::Bool
 ```
 
 The event and when passed into the stop condition are the event and time that are

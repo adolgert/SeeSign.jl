@@ -177,7 +177,7 @@ end
 
 
 ####### transitions
-abstract type BoardTransition <: SimTransition end
+abstract type BoardTransition <: SimEvent end
 
 struct MoveTransition <: BoardTransition
     who::Int  # An agent index.

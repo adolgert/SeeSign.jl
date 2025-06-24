@@ -50,11 +50,11 @@ end
 # to create transitions in terms of structs, but the structs
 # are unnecessary during runtime. They may even be detrimental
 # to performance.
-struct MoveTransition <: SimTransition
+struct MoveTransition <: SimEvent
     mover::Int
     direction::Direction
 end
-# Use @generated to convert a SimTransition to its clock_key.
+# Use @generated to convert a SimEvent to its clock_key.
  
 function precondition(mt::MoveTransition, physical)
     mover = mt.mover
