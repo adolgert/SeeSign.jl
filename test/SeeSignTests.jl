@@ -11,6 +11,7 @@ include("test_regex_tuples.jl")
 include("test_changed.jl")
 include("test_depnet.jl")
 include("test_tracked.jl")
+include("test_events.jl")
 include("test_physical.jl")
 include("test_sim.jl")
 

@@ -1,5 +1,7 @@
 using Logging
 
+export SimEvent, InitializeEvent, clock_key, key_clock
+
 """
   SimEvent
 
@@ -19,9 +21,9 @@ struct InitializeEvent <: SimEvent end
 All `SimEvent` objects are immutable structs that represent events but
 don't carry any mutable state. A clock key is a tuple version of an event.
 """
-@generated function clock_key(transition::T) where T <: SimEvent
+@generated function clock_key(event::T) where T <: SimEvent
     type_symbol = QuoteNode(nameof(T))
-    field_exprs = [:(transition.$field) for field in fieldnames(T)]
+    field_exprs = [:(event.$field) for field in fieldnames(T)]
     return :($type_symbol, $(field_exprs...))
 end
 

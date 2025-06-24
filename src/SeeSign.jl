@@ -5,7 +5,7 @@ module SeeSign
 include("tracked.jl")
 include("depnet.jl")
 include("physical.jl")
-include("transitions.jl")
+include("events.jl")
 include("generators.jl")
 include("framework.jl")
 
