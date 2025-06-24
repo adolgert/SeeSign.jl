@@ -32,6 +32,9 @@ end
 
 Takes a tuple of the form (:symbol, arg, arg) and a dictionary mapping symbols
 to struct types, and returns an instantiation of the struct named by :symbol.
+We pass in the list of datatypes because, if we didn't, then instantiation
+of a type from a symbol would need to search for the correct constructor
+in the correct module, and that would be both wrong and slow.
 """
 function key_clock(key::Tuple, event_dict::Dict{Symbol, DataType})
     if !isa(key[1], Symbol)
