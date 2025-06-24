@@ -4,246 +4,19 @@ using CompetingClocks: SSA, CombinedNextReaction, enable!, disable!, next, Xoshi
 using Distributions
 
 
-####### The physical state is transactional.
-
-export PhysicalState, changed, wasread, resetread, accept
-abstract type PhysicalState end
-
-"""
-    isconsistent(physical_state)
-
-A simulation in debug mode will assert `isconsistent(physical_state)` is true.
-Override this to verify the physical state of your simulation.
-"""
-isconsistent(::PhysicalState) = true
-
-"""
-Iterate over all tracked vectors in the physical state.
-"""
-function over_tracked_physical_state(fcallback::Function, physical::T) where {T <: PhysicalState}
-    for field_symbol in fieldnames(T)
-        member = getproperty(physical, field_symbol)
-        if isa(member, TrackedVector)
-            fcallback(field_symbol, member)
-        end
-    end
-end
-
-
-"""
-Return a list of changed places in the physical state.
-A place for this state is a tuple of a symbol and the Cartesian index.
-The symbol is the name of the array within the PhysicalState.
-"""
-function changed(physical::PhysicalState)
-    places = Set{Tuple}()
-    over_tracked_physical_state(physical) do fieldname, member
-        union!(places, [(fieldname, key...) for key in changed(member)])
-    end
-    return places
-end
-
-
-"""
-Return a list of changed places in the physical state.
-A place for this state is a tuple of a symbol and the Cartesian index.
-The symbol is the name of the array within the PhysicalState.
-"""
-function wasread(physical::PhysicalState)
-    places = Set{Tuple}()
-    over_tracked_physical_state(physical) do fieldname, member
-        union!(places, [(fieldname, key...) for key in gotten(member)])
-    end
-    return places
-end
-
-"""
-Return a list of changed places in the physical state.
-A place for this state is a tuple of a symbol and the Cartesian index.
-The symbol is the name of the array within the PhysicalState.
-"""
-function resetread(physical::PhysicalState)
-    over_tracked_physical_state(physical) do _, member
-        reset_gotten!(member)
-    end
-    return physical
-end
-
-
-"""
-The arrays in a PhysicalState record that they have been modified.
-This function erases the record of modifications.
-"""
-function accept(physical::PhysicalState)
-    over_tracked_physical_state(physical) do _, member
-        reset_tracking!(member)
-    end
-    return physical
-end
-
-##### Helpers for events
-
-export EventGenerator, generators
-
-"""
-    EventGenerator{TransitionType}(matchstr, generator::Function)
-
-When an event fires, it changes the physical state. The simulation observes which
-parts of the physical state changed and sends those parts to this `EventGenerator`.
-The `EventGenerator` is a rule that matches changes to the physical state and creates
-`SimTransition` that act on that physical state.
-
-The `matchstr` is a list of symbols `(array_name, ℤ, struct_member)`. The ℤ represents
-the integer index within the array. For instance, if we simulated chess, it might
-be `(:board, ℤ, :piece)`.
-
-The generator is a callback that the simulation uses to determine which events
-need to be enabled given recent changes to the state of the board. Its signature
-is:
-
-```
-    callback_function(f::Function, physical_state, indices...)
-```
-
-Here the indices are the integer index that matches the ℤ above. This callback
-function should look at the physical state and call `f(transition)` where
-`transition` is an instance of `SimTransition`.
-"""
-struct EventGenerator{T}
-    matchstr::Vector{Symbol}
-    generator::Function
-end
-
-genmatch(eg::EventGenerator, place_key) = accessmatch(eg.matchstr, place_key)
-(eg::EventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
-
-
-
-export EventEventGenerator
-
-
-"""
-    EventEventGenerator{TransitionType}(matchstr, generator::Function)
-
-This generator reacts to the last event fired instead of `EventGenerator` which
-reacts to the last places modified. In this case, the `matchstr` is a vector
-with one entry, the symbol version of the transition type it matches. For
-a transition called `MoveTransition` it would be `matchstr=[:MoveTransition]`.
-
-The generator is a callback function whose signature is:
-
-
-```
-    callback_function(f::Function, physical_state, event_members...)
-```
-
-This callback function is passed arguments that are the members of the instance
-of the transition it matched.
-"""
-struct EventEventGenerator
-    matchstr::Vector{Symbol}
-    generator::Function
-end
-
-genmatch(eg::EventEventGenerator, event_key) = (event_key[1] == eg.matchstr[1] ? (event_key[2:end],) : nothing)
-(eg::EventEventGenerator)(f::Function, physical, indices...) = eg.generator(f, physical, indices...)
-
-
-function transition_generate_event(gen::EventGenerator{T}, physical, place_key, existing_events) where T
-    match_result = genmatch(gen, place_key)
-    isnothing(match_result) && return nothing
-    # @debug "matched $place_key"
-    
-    # Extract the first captured integer from the ℤ⁺ pattern
-    sym_index_value = match_result[1][1]
-
-    sym_create = T[]
-    sym_depends = Set{Tuple}[]
-
-    gen(physical, sym_index_value) do transition
-        # @debug "Direction $direction"
-        resetread(physical)
-        if precondition(transition, physical)
-            input_places = wasread(physical)
-            if clock_key(transition) ∉ existing_events
-                push!(sym_create, transition)
-                push!(sym_depends, input_places)
-            end
-        end
-    end
-    if isempty(sym_create)
-        return nothing
-    else
-        return (create=sym_create, depends=sym_depends)
-    end
-end
-
 
 ########## The Simulation Finite State Machine (FSM)
-
-"""
-  SimTransition
-
-This abstract type is the parent of all transitions in the system.
-"""
-abstract type SimTransition end
-
-"""
-InitializeEvent is a concrete transition type that represents the first event
-in the system, initialization.
-"""
-struct InitializeEvent <: SimTransition end
-
-"""
-    clock_key(::SimTransition)::Tuple
-
-All `SimTransition` objects are immutable structs that represent events but
-don't carry any mutable state. A clock key is a tuple version of an event.
-"""
-@generated function clock_key(transition::T) where T <: SimTransition
-    type_symbol = QuoteNode(nameof(T))
-    field_exprs = [:(transition.$field) for field in fieldnames(T)]
-    return :($type_symbol, $(field_exprs...))
-end
-
-"""
-    key_clock(key::Tuple)::SimTransition
-
-Takes a tuple of the form (:symbol, arg, arg) and returns an instantiation
-of the struct named by :symbol.
-"""
-@generated function key_clock(key::Tuple)
-    type_symbol = key.parameters[1]
-    if isa(type_symbol, Symbol)
-        struct_type = eval(type_symbol)
-        field_count = fieldcount(struct_type)
-        field_exprs = [:(key[$(i+1)]) for i in 1:field_count]
-        return :($struct_type($(field_exprs...)))
-    else
-        return :(error("First element of tuple must be a Symbol"))
-    end
-end
-
-
-"""
-    generators(::Type{SimTransition})::Vector{Union{EventGenerator,EventEventGenerator}}
-
-Every transition in the simulation needs generators that notice changes to state
-or events fired and create the appropriate transitions. Implement a `generators`
-function as part of the interface of each transition.
-"""
-generators(::Type{SimTransition}) = Union{EventGenerator,EventEventGenerator}[]
-
 
 mutable struct SimulationFSM{State,Sampler,CK}
     physical::State
     sampler::Sampler
     event_rules::Vector{EventGenerator}
     event_event_rules::Vector{EventEventGenerator}
+    immediate_rules::Vector{ImmediateEventGenerator}
     when::Float64
     rng::Xoshiro
     depnet::DependencyNetwork{CK}
-    enabled_events::Dict{CK,SimTransition}
+    enabled_events::Dict{CK,SimEvent}
     enabling_times::Dict{CK,Float64}
     observer
 end
@@ -255,32 +28,37 @@ end
 Create a simulation.
 
 The `physical_state` is of type `PhysicalState`. The sampler is of type
-`CompetingClocks.SSA`. The `trans_rules` are a list of type `SimTransition`.
+`CompetingClocks.SSA`. The `trans_rules` are a list of type `SimEvent`.
 The seed is an integer seed for a `Xoshiro` random number generator. The
 observer is a callback with the signature:
 
 ```
-observer(physical, when::Float64, event::SimTransition, changed_places::Set{Tuple})
+observer(physical, when::Float64, event::SimEvent, changed_places::Set{Tuple})
 ```
 
 The `changed_places` argument is a set-like object with tuples that are keys that
 represent which places were changed.
 """
-function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed; observer=nothing) where {CK}
+function classify_transition_rules(trans_rules)
     event_rules = EventGenerator[]
     event_event_rules = EventEventGenerator[]
+    immediate_rules = ImmediateEventGenerator[]
     not_good_rule = []
+    
     for transition in trans_rules
         for rule in generators(transition)
             if isa(rule, EventGenerator)
                 push!(event_rules, rule)
             elseif isa(rule, EventEventGenerator)
                 push!(event_event_rules, rule)
+            elseif isa(rule, ImmediateEventGenerator)
+                push!(immediate_rules, rule)
             else
                 push!(not_good_rule, rule)
             end
         end
     end
+    
     if !isempty(not_good_rule)
         @error "Could not classify as a place rule or an event rule: $(length(not_good_rule))"
         for rule in not_good_rule
@@ -288,18 +66,26 @@ function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed; observer=n
         end
         @assert isempty(not_good_rule)
     end
+    
+    return (;event_rules, event_event_rules, immediate_rules)
+end
+
+function SimulationFSM(physical, sampler::SSA{CK}, trans_rules, seed; observer=nothing) where {CK}
+    rules = classify_transition_rules(trans_rules)
+    
     if isnothing(observer)
         observer = (args...) -> nothing
     end
     return SimulationFSM{typeof(physical),typeof(sampler),CK}(
         physical,
         sampler,
-        event_rules,
-        event_event_rules,
+        rules.event_rules,
+        rules.event_event_rules,
+        rules.immediate_rules,
         0.0,
         Xoshiro(seed),
         DependencyNetwork{CK}(),
-        Dict{CK,SimTransition}(),
+        Dict{CK,SimEvent}(),
         Dict{CK,Float64}(),
         observer,
     )
@@ -309,12 +95,41 @@ function checksim(sim::SimulationFSM)
     @assert keys(sim.enabled_events) == keys(sim.depnet.event)
 end
 
+
 function rate_reenable(sim::SimulationFSM, event, clock_key)
-    resetread(sim.physical)
     first_enable = sim.enabling_times[clock_key]
-    reenable(event, sim.sampler, sim.physical, first_enable, sim.when, sim.rng)
-    rate_deps = wasread(sim.physical)
-    return rate_deps
+    reads_result = capture_state_reads(sim.physical) do
+        reenable(event, sim.sampler, sim.physical, first_enable, sim.when, sim.rng)
+    end
+    return reads_result.reads
+end
+
+function generate_new_events(sim::SimulationFSM, changed_places, fired_event)
+    new_events = Tuple{SimEvent,Set{Tuple}}[]
+    
+    # Process place-based rules
+    for place in changed_places
+        for rule_func in sim.event_rules
+            gen = transition_generate_event(rule_func, sim.physical, place, keys(sim.enabled_events))
+            isnothing(gen) && continue
+            for evtidx in eachindex(gen.create)
+                event = gen.create[evtidx]
+                push!(new_events, (event, gen.depends[evtidx]))
+            end
+        end
+    end
+    
+    # Process event-event rules (rules that trigger on events rather than places)
+    for evt_rule_func in sim.event_event_rules
+        gen = transition_generate_event(evt_rule_func, sim.physical, fired_event, keys(sim.enabled_events))
+        isnothing(gen) && continue
+        for evtidx in eachindex(gen.create)
+            event = gen.create[evtidx]
+            push!(new_events, (event, gen.depends[evtidx]))
+        end
+    end
+    
+    return new_events
 end
 
 function enable_new_event!(sim::SimulationFSM, event, cond_deps)
@@ -322,9 +137,10 @@ function enable_new_event!(sim::SimulationFSM, event, cond_deps)
     sim.enabled_events[evtkey] = event
     sim.enabling_times[evtkey] = sim.when
     
-    resetread(sim.physical)
-    enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
-    rate_deps = wasread(sim.physical)
+    reads_result = capture_state_reads(sim.physical) do
+        enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
+    end
+    rate_deps = reads_result.reads
     
     @debug "Evtkey $(evtkey) with enable deps $(cond_deps) rate deps $(rate_deps)"
     add_event!(sim.depnet, evtkey, cond_deps, rate_deps)
@@ -354,10 +170,11 @@ function deal_with_changes(
 
     for check_clock_key in sort(collect(cond_affected))
         event = sim.enabled_events[check_clock_key]
-        begin
-            resetread(sim.physical)
-            cond_result = precondition(event, sim.physical)
+        reads_result = capture_state_reads(sim.physical) do
+            precondition(event, sim.physical)
         end
+        cond_result = reads_result.result
+        cond_places = reads_result.reads
 
         if !cond_result
             push!(clock_toremove, check_clock_key)
@@ -368,7 +185,6 @@ function deal_with_changes(
             # right, but its moving right now depends on a different space
             # to the right. This is because a "move right" event is defined
             # relative to a state, not on a specific set of places.
-            cond_places = wasread(sim.physical)
             if cond_places != getplace(sim.depnet, check_clock_key).en
                 # Then you get new places.
                 rate_deps = rate_reenable(sim, event, check_clock_key)
@@ -393,25 +209,9 @@ function deal_with_changes(
     # will depend on different board places after the piece has moved.
     disable_clocks!(sim, clock_toremove)
 
-    for place in changed_places
-        for rule_func in sim.event_rules
-            gen = transition_generate_event(rule_func, sim.physical, place, keys(sim.enabled_events))
-            isnothing(gen) && continue
-            for evtidx in eachindex(gen.create)
-                event = gen.create[evtidx]
-                enable_new_event!(sim, event, gen.depends[evtidx])
-            end
-        end
-    end
-    # Process event-event rules (rules that trigger on events rather than places)
-    # Note: This may need to be adapted based on how event-event rules should work
-    for evt_rule_func in sim.event_event_rules
-        gen = transition_generate_event(evt_rule_func, sim.physical, fired_event, keys(sim.enabled_events))
-        isnothing(gen) && continue
-        for evtidx in eachindex(gen.create)
-            event = gen.create[evtidx]
-            enable_new_event!(sim, event, gen.depends[evtidx])
-        end
+    new_events = generate_new_events(sim, changed_places, fired_event)
+    for (event, dependencies) in new_events
+        enable_new_event!(sim, event, dependencies)
     end
     accept(sim.physical)
     checksim(sim)
@@ -433,8 +233,17 @@ end
 function fire!(sim::SimulationFSM, when, what)
     sim.when = when
     event = sim.enabled_events[what]
-    fire!(event, sim.physical)
-    changed_places = changed(sim.physical)
+    
+    changes_result = capture_state_changes(sim.physical) do
+        fire!(event, sim.physical)
+    end
+    changed_places = changes_result.changes
+    
+    seen_immediate = SimEvent[]
+    for immediate in sim.immediate_rules
+        more_places = transition_immediate_event(immediate, sim.physical, what, seen_immediate)
+        union!(changed_places, more_places)
+    end
     sim.observer(sim.physical, when, event, changed_places)
     disable_clocks!(sim, [what])
     deal_with_changes(sim, event, changed_places)
@@ -452,10 +261,10 @@ physical state.
 ```
 """
 function initialize!(callback::Function, sim::SimulationFSM)
-    accept(sim.physical)
-    callback(sim.physical)
-    changed_places = changed(sim.physical)
-    deal_with_changes(sim, InitializeEvent(), changed_places)
+    changes_result = capture_state_changes(sim.physical) do
+        callback(sim.physical)
+    end
+    deal_with_changes(sim, InitializeEvent(), changes_result.changes)
 end
 
 
@@ -468,7 +277,7 @@ is a function whose argument is a physical state and returns nothing. The
 stop condition is a function with the signature:
 
 ```
-stop_condition(physical_state, step_idx, event::SimTransition, when)::Bool
+stop_condition(physical_state, step_idx, event::SimEvent, when)::Bool
 ```
 
 The event and when passed into the stop condition are the event and time that are

@@ -1,10 +1,17 @@
 module SeeSign
 
-include("higher_order.jl")
-include("changed.jl")
+
+#### Beginning of framework
 include("tracked.jl")
 include("depnet.jl")
+include("physical.jl")
+include("events.jl")
+include("generators.jl")
 include("framework.jl")
+
+##### End of framework
+include("higher_order.jl")
+include("changed.jl")
 include("sim.jl")
 include("regex_tuples.jl")
 
