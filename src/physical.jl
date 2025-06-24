@@ -1,6 +1,8 @@
 using Logging
 
-export PhysicalState, changed, wasread, resetread, accept
+export PhysicalState, changed, wasread, resetread, accept, isconsistent
+export capture_state_changes, capture_state_reads
+
 
 """
 `PhysicalState` is an abstract type from which to inherit the state of a simulation.
