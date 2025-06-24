@@ -28,19 +28,22 @@ don't carry any mutable state. A clock key is a tuple version of an event.
 end
 
 """
-    key_clock(key::Tuple)::SimEvent
+    key_clock(key::Tuple, event_dict::Dict{Symbol, DataType})::SimEvent
 
-Takes a tuple of the form (:symbol, arg, arg) and returns an instantiation
-of the struct named by :symbol.
+Takes a tuple of the form (:symbol, arg, arg) and a dictionary mapping symbols
+to struct types, and returns an instantiation of the struct named by :symbol.
 """
-@generated function key_clock(key::Tuple)
-    type_symbol = key.parameters[1]
-    if isa(type_symbol, Symbol)
-        struct_type = eval(type_symbol)
-        field_count = fieldcount(struct_type)
-        field_exprs = [:(key[$(i+1)]) for i in 1:field_count]
-        return :($struct_type($(field_exprs...)))
-    else
-        return :(error("First element of tuple must be a Symbol"))
+function key_clock(key::Tuple, event_dict::Dict{Symbol, DataType})
+    if !isa(key[1], Symbol)
+        error("First element of tuple must be a Symbol")
     end
+    
+    type_symbol = key[1]
+    if !haskey(event_dict, type_symbol)
+        error("Type $type_symbol not found in event dictionary")
+    end
+    
+    struct_type = event_dict[type_symbol]
+    field_args = key[2:end]
+    return struct_type(field_args...)
 end
