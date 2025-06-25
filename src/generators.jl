@@ -136,3 +136,39 @@ or events fired and create the appropriate transitions. Implement a `generators`
 function as part of the interface of each transition.
 """
 generators(::Type{SimEvent}) = Union{EventGenerator,EventEventGenerator}[]
+
+
+struct GeneratorSearch{EventKey}
+    event_to_event::Dict{EventKey,Vector{Function}}
+    byarray::Dict{Symbol,Dict{Symbol,Vector{Function}}}
+end
+
+
+function over_generated_events(f::Function, generators, physical, event_key, changed_places)
+    event_args = event_key[2:end]
+    for from_event in generators.event_to_event[event_key]
+        from_event(f, physical, event_args...)
+    end
+    # Every place is (arrayname, integer index in array, struct member)
+    for place in changed_places
+        place_idx = place[2]
+        for genfunc in get(generators.byarray[place[1]], place[3], Function[])
+            genfunc(f, physical, place_idx)
+        end
+    end
+end
+
+
+function GeneratorSearch(generators::Vector{EventGenerator})
+    from_event = Dict{EventKey,Vector{Function}}()
+    from_array = Dict{Symbol,Dict{Symbol,Vector{Function}}}()
+    for add_gen in generators
+        if matches_event(add_gen)
+            
+        elseif matches_place(add_gen)
+        else
+            error("event generator should match place or event")
+        end
+    end
+    GeneratorSearch{Tuple}(from_event, from_array)
+end
