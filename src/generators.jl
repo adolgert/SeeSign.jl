@@ -140,6 +140,7 @@ generators(::Type{SimEvent}) = Union{EventGenerator,EventEventGenerator}[]
 
 struct GeneratorSearch{EventKey}
     event_to_event::Dict{EventKey,Vector{Function}}
+    # Think of this as a two-level trie.
     byarray::Dict{Symbol,Dict{Symbol,Vector{Function}}}
 end
 
@@ -164,11 +165,22 @@ function GeneratorSearch(generators::Vector{EventGenerator})
     from_array = Dict{Symbol,Dict{Symbol,Vector{Function}}}()
     for add_gen in generators
         if matches_event(add_gen)
-            
+            struct_name = add_gen.matchstr[1]
+            rule_set = get!(from_event, struct_name, Vector{Function}[])
+            push!(rule_set, add_gen.generator)
         elseif matches_place(add_gen)
+            struct_name = add_gen.matches[1]
+            property_name = add_gen.matches[3]
+            if struct_name ∉ keys(from_array)
+                from_array[struct_name] = Dict{Symbol,Vector{Function}}()
+            end
+            rule_set = get!(from_array[struct_name], property_name, Vector{Function}[])
+            push!(rule_set, add_gen.generator)
         else
             error("event generator should match place or event")
         end
     end
+    # Use a tuple as an event key, but we could specialize this if all events
+    # share the same structure.
     GeneratorSearch{Tuple}(from_event, from_array)
 end
