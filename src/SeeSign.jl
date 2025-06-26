@@ -12,6 +12,7 @@ include("framework.jl")
 ##### End of framework
 include("higher_order.jl")
 include("changed.jl")
+include("board_geometry.jl")
 include("sim.jl")
 include("regex_tuples.jl")
 
