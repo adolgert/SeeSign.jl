@@ -6,19 +6,7 @@ using Logging
 
 # This will simulate agents moving on a board and infecting each other.
 
-export DirectionDelta, DirectionOpposite, MoveTransition
-
-# They can move in any of four directions.
-@enum Direction NoDirection Up Left Down Right
-const DirectionDelta = Dict(
-    Up => CartesianIndex(-1, 0),
-    Left => CartesianIndex(0, -1),
-    Down => CartesianIndex(1, 0),
-    Right => CartesianIndex(0, 1),
-    );
-const DirectionOpposite = Dict(
-    Up => Down, Down => Up, Left => Right, Right => Left
-)
+export MoveTransition
 
 # They have health states.
 @enum Health NoHealth Healthy Sick Dead
@@ -41,7 +29,7 @@ end
 # Everything we know about an agent.
 @tracked_struct Agent begin
     health::Health
-    loc::CartesianIndex{2}
+    loc::Int  # Points to the relevant square.
     birthtime::Float64
 end
 
@@ -74,23 +62,26 @@ mutable struct BoardState <: PhysicalState
     board::TrackedVector{Square}
     agent::TrackedVector{Agent}
     # The tracked_vector is 1D but the board is 2D so we have to save conversion.
-    board_dim::BoardIndices
+    geom::BoardGeometry
 
     function BoardState(board::AbstractArray)
+        agent_cnt = length(findall(x -> x != 0, board))
+        agent = TrackedVector{Agent}(undef, agent_cnt)
         linboard = TrackedVector{Square}(undef, length(board))
         for (i, val) in enumerate(board)
             linboard[i] = Square(val, 1.0)
+            if val > 0
+                if val <= agent_cnt
+                    agent[val] = Agent(Healthy, i, 0.0)
+                else
+                    @error "Expected the board to have agents from 1 to $(agent_cnt), found $val"
+                end
+            end
         end
-        location::Vector{CartesianIndex{2}} = findall(x -> x != 0, board)
-        agent = TrackedVector{Agent}(undef, length(location))
-        for foundidx in eachindex(location)
-            loc = location[foundidx]
-            agentidx = board[loc]
-            agent[agentidx] = Agent(Healthy, loc, 0.0)
-        end
-        new(linboard, agent, CartesianIndices(board))
+        new(linboard, agent, BoardGeometry(size(board)))
     end
 end
+
 
 """
 Pretty print the board state.
@@ -102,8 +93,8 @@ function Base.show(io::IO, state::BoardState)
             if state.agent[agentidx].health == Sick
             ]
     println(io, "Infected agents: ", infected)
-    ci = state.board_dim
-    li = LinearIndices(ci)
+    ci = state.geom.cartesian_indices
+    li = state.geom.linear_indices
     for rowidx in axes(ci, 1)
         occ = [string(state.board[li[rowidx, colidx]].occupant)
                 for colidx in axes(ci, 2)
@@ -128,8 +119,8 @@ function isconsistent(physical::BoardState)
             end
             push!(seen_agents, agent_idx)
             agent_loc = physical.agent[agent_idx].loc
-            if agent_loc != physical.board_dim[square]
-                @error "Inconsistent board: square $square has occupant $agent_idx at location $agent_loc but should be at $(physical.board_dim[square])"
+            if agent_loc != square
+                @error "Inconsistent board: square $square has occupant $agent_idx at location $agent_loc but should be at $square"
                 return false
             end
         end
@@ -145,34 +136,17 @@ when you move an agent.
 """
 function move_agent(physical, agentidx, destination)
     old_loc = physical.agent[agentidx].loc
-    old_board_idx = LinearIndices(physical.board_dim)[old_loc]
-    new_board_idx = LinearIndices(physical.board_dim)[destination]
-    
-    @assert physical.board[old_board_idx].occupant == agentidx
-    physical.board[old_board_idx].occupant = 0
+    @assert physical.board[old_loc].occupant == agentidx
+    physical.board[old_loc].occupant = 0
     physical.agent[agentidx].loc = destination
-    @assert physical.board[new_board_idx].occupant == 0
-    physical.board[new_board_idx].occupant = agentidx
+    @assert physical.board[destination].occupant == 0
+    physical.board[destination].occupant = agentidx
 end
 
 
 function move_in_direction(physical, agentidx, direction)
-    newloc = physical.agent[agentidx].loc + DirectionDelta[direction]
+    newloc = neighbor_in_direction(physical.geom, physical.agent[agentidx].loc, direction)
     move_agent(physical, agentidx, newloc)
-end
-
-isneighbor(loca, locb) = sum(x^2 for x in (loca-locb).I) == 1
-
-"""
-Given the integer index into the linear board vector, return an iterator
-over the linear indices of neighbors that are in bounds.
-"""
-function neighbor_lin(physical, boardlin)
-    ci = physical.board_dim[boardlin]
-    li = LinearIndices(physical.board_dim)
-    return (li[ci + DirectionDelta[direction]] 
-            for direction in keys(DirectionDelta) 
-            if checkbounds(Bool, physical.board_dim, ci + DirectionDelta[direction]))
 end
 
 
@@ -187,10 +161,9 @@ end
 function precondition(mt::MoveTransition, physical)
     checkbounds(Bool, physical.agent, mt.who) || return false
     who_loc = physical.agent[mt.who].loc
-    neighbor_loc = who_loc + DirectionDelta[mt.direction]
-    checkbounds(Bool, physical.board_dim, neighbor_loc) || return false
-    neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
-    physical.board[neighbor_lin].occupant == 0
+    neighbor_loc = neighbor_in_direction(physical.geom, who_loc, mt.direction)
+    isnothing(neighbor_loc) && return false
+    physical.board[neighbor_loc].occupant == 0
 end
 
 function generators(::Type{MoveTransition})
@@ -202,12 +175,8 @@ function generators(::Type{MoveTransition})
             # The place we watch is the location of an agent.
             function agent_moved_gen(f::Function, physical, agent_who)
                 agent_loc = physical.agent[agent_who].loc
-                for direction in keys(DirectionDelta)
-                    if checkbounds(
-                        Bool, physical.board_dim, agent_loc + DirectionDelta[direction]
-                    )
-                        f(MoveTransition(agent_who, direction))
-                    end
+                for direction in valid_directions(physical.geom, agent_loc)
+                    f(MoveTransition(agent_who, direction))
                 end
             end,
         ),
@@ -217,16 +186,9 @@ function generators(::Type{MoveTransition})
             # The neighbor of an agent got out of its way, so now the agent can move.
             # The place we watch is a board space that was previously occupied.
             function neighbor_moved_gen(f::Function, physical, board_lin)
-                board_loc = physical.board_dim[board_lin]
-                li = LinearIndices(physical.board_dim)
-                for direction in keys(DirectionDelta)
-                    move_loc = board_loc + DirectionDelta[direction]
-                    if checkbounds(Bool, physical.board_dim, move_loc)
-                        move_lin = li[move_loc]
-                        who = physical.board[move_lin].occupant
-                        move_direction = DirectionOpposite[direction]
-                        f(MoveTransition(who, move_direction))
-                    end
+                for beside in neighbors(physical.geom, board_lin)
+                    reverse = direction_between(physical.geom, beside, board_lin)
+                    f(MoveTransition(physical.board[beside].occupant, reverse))
                 end
             end,
         ),
@@ -266,22 +228,16 @@ function allowed_moves(physical)
     moves = Vector{ClockKey}()
     for agent_idx in eachindex(physical.agent)
         loc = physical.agent[agent_idx].loc
-        loc_linear = LinearIndices(physical.board_dim)[loc]
-        @assert physical.board[loc_linear].occupant == agent_idx
-        for direction in keys(DirectionDelta)
-            new_loc = loc + DirectionDelta[direction]
-            if checkbounds(Bool, physical.board_dim, new_loc)
-                new_loc_linear = LinearIndices(physical.board_dim)[new_loc]
-                if physical.board[new_loc_linear].occupant == 0
-                    push!(moves, ClockKey((:MoveTransition, agent_idx, direction)))
-                end
+        @assert physical.board[loc].occupant == agent_idx
+        for direction in valid_directions(physical.geom, loc)
+            new_loc = neighbor_in_direction(physical.geom, loc, direction)
+            if physical.board[new_loc].occupant == 0
+                push!(moves, ClockKey((:MoveTransition, agent_idx, direction)))
             end
         end
     end
     return moves
 end
-
-
 
 
 struct InfectTransition <: BoardTransition
@@ -293,7 +249,11 @@ end
 function precondition(it::InfectTransition, physical)
     return physical.agent[it.infectious].health == Sick &&
         physical.agent[it.susceptible].health == Healthy &&
-        isneighbor(physical.agent[it.infectious].loc, physical.agent[it.susceptible].loc)
+        are_neighbors(
+            physical.geom,
+            physical.agent[it.infectious].loc,
+            physical.agent[it.susceptible].loc
+            )
 end
 
 
@@ -306,23 +266,12 @@ function generators(::Type{InfectTransition})
             function discordant_arrival(f::Function, physical, board_lin)
                 mover = physical.board[board_lin].occupant
                 mover > 0 || return
-                mover_health = physical.agent[mover].health
-                li = LinearIndices(physical.board_dim)
-                board_loc = physical.board_dim[board_lin]
-                for direction in keys(DirectionDelta)
-                    # Beside them
-                    neighbor_loc = board_loc + DirectionDelta[direction]
-                    if checkbounds(Bool, physical.board_dim, neighbor_loc)
-                        neighbor_lin = li[neighbor_loc]
-                        neighbor = physical.board[neighbor_lin].occupant
-                        # Was another agent.
-                        if neighbor > 0
-                            neighbor_health = physical.agent[neighbor].health
-                            pair = [(mover_health, mover), (neighbor_health, neighbor)]
-                            # They will sort into Health before Infectious
-                            sort!(pair)
-                            f(InfectTransition(pair[2][2], pair[1][2]))
-                        end
+                for loc in neighbors(physical.geom, physical.agent[mover].loc)
+                    next_door = physical.board[loc].occupant
+                    if next_door > 0
+                        # The precondition will sort out if any of these applies.
+                        f(InfectTransition(mover, next_door))
+                        f(InfectTransition(next_door, mover))
                     end
                 end
             end,
@@ -338,17 +287,11 @@ function generators(::Type{InfectTransition})
             function sick_in_place(f::Function, physical, sicko)
                 sick_health = physical.agent[sicko].health
                 sick_loc = physical.agent[sicko].loc
-                for direction in keys(DirectionDelta)
-                    neighbor_loc = sick_loc + DirectionDelta[direction]
-                    if checkbounds(Bool, physical.board_dim, neighbor_loc)
-                        neighbor_lin = LinearIndices(physical.board_dim)[neighbor_loc]
-                        neighbor = physical.board[neighbor_lin].occupant
-                        if neighbor > 0
-                            neighbor_health = physical.agent[neighbor].health
-                            both = [(sick_health, sicko), (neighbor_health, neighbor)]
-                            sort!(both)
-                            f(InfectTransition(both[2][2], both[1][2]))
-                        end
+                for next_door in neighbors(physical.geom, sick_loc)
+                    friend = physical.board[next_door].occupant
+                    if friend > 0
+                        f(InfectTransition(sicko, friend))
+                        f(InfectTransition(friend, sicko))
                     end
                 end
             end,
@@ -374,11 +317,9 @@ end
 
 function initialize!(physical::PhysicalState, individuals::Int, rng)
     for ind_idx in 1:individuals
-        loc = rand(rng, physical.board_dim)
-        board_idx = LinearIndices(physical.board_dim)[loc]
-        while physical.board[board_idx].occupant != 0
-            loc = rand(rng, physical.board_dim)
-            board_idx = LinearIndices(physical.board_dim)[loc]
+        loc = random_position(physical.geom, rng)
+        while physical.board[loc].occupant != 0
+            loc = random_position(physical.geom, rng)
         end
         move_agent(physical, ind_idx, loc)
     end
@@ -393,14 +334,10 @@ function allowed_infects(physical)
     for agent_idx in eachindex(physical.agent)
         if physical.agent[agent_idx].health == Sick
             loc = physical.agent[agent_idx].loc
-            for direction in keys(DirectionDelta)
-                neighbor_loc = loc + DirectionDelta[direction]
-                if checkbounds(Bool, physical.board_dim, neighbor_loc)
-                    neighbor_loc_linear = LinearIndices(physical.board_dim)[neighbor_loc]
-                    neighbor_agent = physical.board[neighbor_loc_linear].occupant
-                    if neighbor_agent > 0 && physical.agent[neighbor_agent].health == Healthy
-                        push!(infects, ClockKey((:InfectTransition, agent_idx, neighbor_agent)))
-                    end
+            for neighbor_loc in neighbors(physical.geom, loc)
+                neighbor_agent = physical.board[neighbor_loc].occupant
+                if neighbor_agent > 0 && physical.agent[neighbor_agent].health == Healthy
+                    push!(infects, ClockKey((:InfectTransition, agent_idx, neighbor_agent)))
                 end
             end
         end
