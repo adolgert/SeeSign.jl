@@ -80,6 +80,31 @@ function rate_reenable(sim::SimulationFSM, event, clock_key)
 end
 
 
+function process_generated_events_from_changes(
+    sim::SimulationFSM,
+    fired_event_key,
+    changed_places
+)
+    over_generated_events(sim.eventgen, sim.physical, fired_event_key, changed_places) do newevent
+        resetread(sim.physical)
+        if precondition(newevent, sim.physical)
+            input_places = wasread(sim.physical)
+            evtkey = clock_key(newevent)
+            if evtkey ∉ keys(sim.enabled_events)
+                sim.enabled_events[evtkey] = newevent
+                sim.enabling_times[evtkey] = sim.when
+                reads_result = capture_state_reads(sim.physical) do
+                    enable(newevent, sim.sampler, sim.physical, sim.when, sim.rng)
+                end
+                rate_deps = reads_result.reads
+                @debug "Evtkey $(evtkey) with enable deps $(input_places) rate deps $(rate_deps)"
+                add_event!(sim.depnet, evtkey, input_places, rate_deps)
+            end
+        end
+    end
+end
+
+
 """
     deal_with_changes(sim::SimulationFSM)
 
@@ -142,23 +167,7 @@ function deal_with_changes(
     # will depend on different board places after the piece has moved.
     disable_clocks!(sim, clock_toremove)
 
-    over_generated_events(sim.eventgen, sim.physical, clock_key(fired_event), changed_places) do newevent
-        resetread(sim.physical)
-        if precondition(newevent, sim.physical)
-            input_places = wasread(sim.physical)
-            evtkey = clock_key(newevent)
-            if evtkey ∉ keys(sim.enabled_events)
-                sim.enabled_events[evtkey] = newevent
-                sim.enabling_times[evtkey] = sim.when
-                reads_result = capture_state_reads(sim.physical) do
-                    enable(newevent, sim.sampler, sim.physical, sim.when, sim.rng)
-                end
-                rate_deps = reads_result.reads
-                @debug "Evtkey $(evtkey) with enable deps $(input_places) rate deps $(rate_deps)"
-                add_event!(sim.depnet, evtkey, input_places, rate_deps)
-            end
-        end
-    end
+    process_generated_events_from_changes(sim, clock_key(fired_event), changed_places)
     accept(sim.physical)
     checksim(sim)
 end
