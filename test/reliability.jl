@@ -2,6 +2,7 @@ module ReliabilitySim
 using SeeSign
 
 using Distributions
+# ajd Cannot use Activity in SeeSign macro.
 #@enum Activity ready working broken
 const ready = 1
 const working = 2
@@ -64,7 +65,7 @@ function enable(evt::StartDay, sampler, physical, when, rng)
     enable!(sampler, clock_key(evt), Dirac(interval), when, when, rng)
 end
 
-function fire!(evt::StartDay, physical)
+function fire!(evt::StartDay, physical, when, rng)
     crew_cnt = 0
     for car in eachindex(physical.actors)
         if physical.actors[car].state == ready
@@ -100,7 +101,7 @@ function enable(evt::EndDay, sampler, physical, when, rng)
     enable!(sampler, clock_key(evt), physical.params[evt.actor_idx].done_dist, when, when, rng)
 end
 
-function fire!(evt::EndDay, physical)
+function fire!(evt::EndDay, physical, when, rng)
     physical.actors[evt.actor_idx].state = ready
     started_work = physical.actors[evt.actor_idx].started_working_time
     physical.actors[evt.actor_idx].work_age += when - started_work
@@ -130,7 +131,7 @@ function enable(evt::Break, sampler, physical, when, rng)
     enable!(sampler, clock_key(evt), physical.params[evt.actor_idx].fail_dist, started_ago, when, rng)
 end
 
-function fire!(evt::Break, physical)
+function fire!(evt::Break, physical, when, rng)
     physical.actors[evt.actor_idx].state = broken
     started_work = physical.actors[evt.actor_idx].started_working_time
     physical.actors[evt.actor_idx].work_age += when - started_work
@@ -158,7 +159,7 @@ function enable(evt::Repair, sampler, physical, when, rng)
     enable!(sampler, clock_key(evt), physical.params[evt.actor_idx].repair_dist, when, when, rng)
 end
 
-function fire!(evt::Repair, physical)
+function fire!(evt::Repair, physical, when, rng)
     physical.actors[evt.actor_idx].state = ready
     physical.actors[evt.actor_idx].work_age = 0.0
 end

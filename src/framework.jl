@@ -187,7 +187,7 @@ end
 
 function modify_state!(sim::SimulationFSM, fire_event)
     changes_result = capture_state_changes(sim.physical) do
-        fire!(fire_event, sim.physical)
+        fire!(fire_event, sim.physical, sim.when, sim.rng)
     end
     changed_places = changes_result.changes
     seen_immediate = SimEvent[]
@@ -195,7 +195,7 @@ function modify_state!(sim::SimulationFSM, fire_event)
         if newevent ∉ seen_immediate && precondition(newevent, sim.physical)
             push!(seen_immediate, newevent)
             ans = capture_state_changes(sim.physical) do
-                fire!(newevent, sim.physical)
+                fire!(newevent, sim.physical, sim.when, sim.rng)
             end
             push!(changed_places, ans.changes)                
         end
