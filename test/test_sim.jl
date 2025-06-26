@@ -52,56 +52,70 @@ end
 end
 
 
-@testset "tomove_generate_event" begin
-        ascii_image = """
-        0 0 7 0 0 0 0 3 0 0
-        0 0 0 0 0 0 0 0 0 6
-        0 0 0 0 0 0 0 0 0 0
-        0 0 0 0 0 0 0 0 0 0
-        0 0 0 0 0 0 0 0 9 2
-        0 0 0 0 0 0 0 0 0 0
-        0 0 0 0 0 5 0 0 0 1
-        0 0 0 0 0 0 0 4 0 0
-        0 0 0 0 0 8 0 0 0 0
-        0 0 0 0 0 0 0 0 0 0
-        """
+@testset "event_generator_for_agent_movement" begin
+    ascii_image = """
+    0 0 7 0 0 0 0 3 0 0
+    0 0 0 0 0 0 0 0 0 6
+    0 0 0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0 9 2
+    0 0 0 0 0 0 0 0 0 0
+    0 0 0 0 0 5 0 0 0 1
+    0 0 0 0 0 0 0 4 0 0
+    0 0 0 0 0 8 0 0 0 0
+    0 0 0 0 0 0 0 0 0 0
+    """
     arr = ascii_to_array(ascii_image)
     physical = SeeSign.BoardState(arr)
-    place_idx = LinearIndices(arr)[1, 3]
-    @test place_idx == 21
-    place = (:agent, 7, :loc)
-    gens = generators(MoveTransition)
-    result = SeeSign.transition_generate_event(gens[1], physical, place, Set{SeeSign.ClockKey}())
-    @test !isnothing(result)
-
+    
+    # Test that event generators are properly configured
+    gens = SeeSign.generators(SeeSign.MoveTransition)
+    @test length(gens) == 2  # One for agent movement, one for board space changes
+    
+    # The first generator watches for agent location changes
+    agent_gen = gens[1]
+    @test agent_gen.matchstr == [:agent, ℤ, :loc]
+    @test SeeSign.matches_place(agent_gen)
+    
+    # Test generating events when agent 7 moves
+    generated_events = SeeSign.SimEvent[]
+    agent_gen.generator(physical, 7) do event
+        push!(generated_events, event)
+    end
+    
+    # Agent 7 at position (1,3) can move in 3 directions (not up because it's at the edge)
     move_cnt = 3
-    clock_key = [SeeSign.clock_key(event) for event in result.create]
-    @test length(Set(clock_key)) == move_cnt
-    @test length(result.create) == move_cnt
-    for event in result.create
+    @test length(generated_events) == move_cnt
+    
+    # Check that all generated events are valid MoveTransitions for agent 7
+    for event in generated_events
         @test isa(event, SeeSign.MoveTransition)
         @test event.who == 7
+        @test event.direction in [SeeSign.Left, SeeSign.Down, SeeSign.Right]
     end
-    @test length(result.depends) == move_cnt
-    for dep in result.depends
-        @test (:board, place_idx, :occupant) ∉ dep
-        @test place ∈ dep
-        @test length(dep) == 2
-        @debug "dep $dep"
-        remaining = pop!(setdiff(dep, [place]))
-        @debug "remaining $remaining"
-        @test remaining[1] == :board
-        @test remaining[3] == :occupant
+    
+    # Verify all generated moves satisfy preconditions
+    for event in generated_events
+        @test SeeSign.precondition(event, physical)
     end
-    @test length(result.create) == move_cnt
-    for enable_idx in 1:move_cnt
-        @test SeeSign.precondition(result.create[enable_idx], physical)
-    end
-
-    ## Modify the board by putting another piece in the way.
+    
+    # Test the second generator (board occupancy changes)
+    board_gen = gens[2]
+    @test board_gen.matchstr == [:board, ℤ, :occupant]
+    @test SeeSign.matches_place(board_gen)
+    
+    # Modify the board by putting another piece in the way (at position (1,4))
     physical.board[LinearIndices(arr)[1, 4]].occupant = 13
-    # Then one of the enabling functions should be false.
-    @test sum([SeeSign.precondition(enevt,physical) for enevt in result.create]) == move_cnt - 1
+    
+    # Regenerate events for agent 7
+    generated_events2 = SeeSign.SimEvent[]
+    agent_gen.generator(physical, 7) do event
+        push!(generated_events2, event)
+    end
+    
+    # Now agent 7 should only be able to move in 2 directions (blocked to the right)
+    valid_moves = [event for event in generated_events2 if SeeSign.precondition(event, physical)]
+    @test length(valid_moves) == move_cnt - 1
 end
 
 

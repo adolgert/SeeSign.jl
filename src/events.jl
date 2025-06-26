@@ -16,6 +16,14 @@ in the system, initialization.
 struct InitializeEvent <: SimEvent end
 
 """
+    isimmediate(EventType)
+
+An immediate event should return true for this function.
+"""
+isimmediate(::Type{<:SimEvent}) = false
+export isimmediate
+
+"""
     clock_key(::SimEvent)::Tuple
 
 All `SimEvent` objects are immutable structs that represent events but
