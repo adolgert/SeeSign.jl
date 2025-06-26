@@ -3,7 +3,7 @@ using Random
 using CompetingClocks: SSA, CombinedNextReaction, enable!, disable!, next, Xoshiro
 using Distributions
 
-
+export SimulationFSM
 
 ########## The Simulation Finite State Machine (FSM)
 

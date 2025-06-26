@@ -1,5 +1,8 @@
 module ReliabilitySim
 using SeeSign
+using CompetingClocks
+using SeeSign: ClockKey
+export run_reliability
 
 using Distributions
 # ajd Cannot use Activity in SeeSign macro.
@@ -60,7 +63,7 @@ function generators(::Type{StartDay})
 end
 
 function enable(evt::StartDay, sampler, physical, when, rng)
-    desired_time = floor(now) + physical.start_time
+    desired_time = floor(when) + physical.start_time
     interval = desired_time - when
     enable!(sampler, clock_key(evt), Dirac(interval), when, when, rng)
 end
@@ -164,7 +167,7 @@ function fire!(evt::Repair, physical, when, rng)
     physical.actors[evt.actor_idx].work_age = 0.0
 end
 
-function initialize!(physical::PhysicalState, individuals::Int, rng)
+function initialize!(physical::PhysicalState, rng)
     for idx in eachindex(physical.actors)
         # This is a warm start to the problem.
         physical.actors[idx].work_age = rand(rng, Uniform(0, 10))
@@ -190,8 +193,9 @@ end
 
 
 function run_reliability(days)
+    agent_cnt = 15
     Sampler = CombinedNextReaction{ClockKey,Float64}
-    physical = IndividualState(15, 10)
+    physical = IndividualState(agent_cnt, 10)
     included_transitions = [
         StartDay,
         EndDay,
@@ -205,15 +209,14 @@ function run_reliability(days)
         2947223
     )
     initializer = function(init_physical)
-        initialize!(init_physical, agent_cnt, sim.rng)
+        initialize!(init_physical, sim.rng)
     end
     # Stop-condition is called after the next event is chosen but before the
     # next event is fired. This way you can stop at an end time between events.
     stop_condition = function(physical, step_idx, event, when)
-        @assert isconsistent(physical) "The initial physical state is inconsistent"
         return when > days
     end
-    run(sim, initializer, stop_condition)
+    SeeSign.run(sim, initializer, stop_condition)
 end
 
 end
