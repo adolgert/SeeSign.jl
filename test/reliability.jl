@@ -52,8 +52,8 @@ precondition(event::StartDay, physical) = true
 function generators(::Type{StartDay})
     return [
         EventGenerator(
-            ToEvent,
-            [:StartDay],
+            ToPlace,
+            [:actors, ℤ, :state],
             function last_fired(f::Function, physical)
                 f(StartDay())
             end
