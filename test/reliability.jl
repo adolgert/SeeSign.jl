@@ -5,14 +5,13 @@ using SeeSign: ClockKey
 export run_reliability
 
 using Distributions
-# ajd Cannot use Activity in SeeSign macro.
-#@enum Activity ready working broken
-const ready = 1
-const working = 2
-const broken = 3
+@enum Activity ready working broken
+# const ready = 1
+# const working = 2
+# const broken = 3
 
 @tracked_struct Individual begin
-    state::Int
+    state::Activity
     work_age::Float64
     started_working_time::Float64
 end
