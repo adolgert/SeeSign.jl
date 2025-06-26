@@ -20,7 +20,7 @@ struct InitializeEvent <: SimEvent end
 
 An immediate event should return true for this function.
 """
-isimmediate(::Type{SimEvent}) = false
+isimmediate(::Type{<:SimEvent}) = false
 export isimmediate
 
 """

@@ -39,17 +39,24 @@ The `changed_places` argument is a set-like object with tuples that are keys tha
 represent which places were changed.
 """
 function SimulationFSM(physical, sampler::SSA{CK}, events, seed; observer=nothing) where {CK}
-    eventgen = GeneratorSearch(filter(!isimmediate, events))
-    immediategen = GeneratorSearch(filter(isimmediate, events))
-    
+    generator_searches = Vector{GeneratorSearch}(undef, 2)
+    for (idx, filter_condition) in enumerate([!isimmediate, isimmediate])
+        event_set = filter(filter_condition, events)
+        generator_set = EventGenerator[]
+        for event in event_set
+            append!(generator_set, generators(event))
+        end
+        generator_searches[idx] = GeneratorSearch(generator_set)
+    end
+
     if isnothing(observer)
         observer = (args...) -> nothing
     end
     return SimulationFSM{typeof(physical),typeof(sampler),CK}(
         physical,
         sampler,
-        eventgen,
-        immediategen,
+        generator_searches[1],
+        generator_searches[2],
         0.0,
         Xoshiro(seed),
         DependencyNetwork{CK}(),
@@ -135,20 +142,20 @@ function deal_with_changes(
     # will depend on different board places after the piece has moved.
     disable_clocks!(sim, clock_toremove)
 
-    over_generated_events(sim.eventgen, physical, fired_event, changed_places) do newevent
-        resetread(physical)
-        if precondition(newevent, physical)
-            input_places = wasread(physical)
+    over_generated_events(sim.eventgen, sim.physical, clock_key(fired_event), changed_places) do newevent
+        resetread(sim.physical)
+        if precondition(newevent, sim.physical)
+            input_places = wasread(sim.physical)
             evtkey = clock_key(newevent)
             if evtkey ∉ keys(sim.enabled_events)
                 sim.enabled_events[evtkey] = newevent
                 sim.enabling_times[evtkey] = sim.when
                 reads_result = capture_state_reads(sim.physical) do
-                    enable(event, sim.sampler, sim.physical, sim.when, sim.rng)
+                    enable(newevent, sim.sampler, sim.physical, sim.when, sim.rng)
                 end
                 rate_deps = reads_result.reads
-                @debug "Evtkey $(evtkey) with enable deps $(cond_deps) rate deps $(rate_deps)"
-                add_event!(sim.depnet, evtkey, cond_deps, rate_deps)
+                @debug "Evtkey $(evtkey) with enable deps $(input_places) rate deps $(rate_deps)"
+                add_event!(sim.depnet, evtkey, input_places, rate_deps)
             end
         end
     end
@@ -175,11 +182,11 @@ function modify_state!(sim::SimulationFSM, fire_event)
     end
     changed_places = changes_result.changes
     seen_immediate = SimEvent[]
-    over_generated_events(sim.immediategen, physical, fire_event, changed_places) do newevent
-        if newevent ∉ seen_immediate && precondition(newevent, physical)
+    over_generated_events(sim.immediategen, sim.physical, clock_key(fire_event), changed_places) do newevent
+        if newevent ∉ seen_immediate && precondition(newevent, sim.physical)
             push!(seen_immediate, newevent)
-            ans = capture_state_changes(physical) do
-                fire!(newevent, physical)
+            ans = capture_state_changes(sim.physical) do
+                fire!(newevent, sim.physical)
             end
             push!(changed_places, ans.changes)                
         end

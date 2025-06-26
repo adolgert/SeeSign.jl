@@ -195,7 +195,8 @@ end
 
 function generators(::Type{MoveTransition})
     return [
-        EventGenerator{MoveTransition}(
+        EventGenerator(
+            ToPlace,
             [:agent, ℤ, :loc],
             # An agent moved, and now there are new moves available to that agent.
             # The place we watch is the location of an agent.
@@ -210,7 +211,8 @@ function generators(::Type{MoveTransition})
                 end
             end,
         ),
-        EventGenerator{MoveTransition}(
+        EventGenerator(
+            ToPlace,
             [:board, ℤ, :occupant],
             # The neighbor of an agent got out of its way, so now the agent can move.
             # The place we watch is a board space that was previously occupied.
@@ -297,7 +299,8 @@ end
 
 function generators(::Type{InfectTransition})
     return [
-        EventGenerator{InfectTransition}(
+        EventGenerator(
+            ToPlace,
             [:board, ℤ, :occupant],
             # Somebody showed up in this board location.
             function discordant_arrival(f::Function, physical, board_lin)
@@ -324,7 +327,8 @@ function generators(::Type{InfectTransition})
                 end
             end,
         ),
-        EventGenerator{InfectTransition}(
+        EventGenerator(
+            ToPlace,
             [:agent, ℤ, :health],
             # Without anybody moving, two agents next to each other could have one become
             # infected or one recover from infected to susceptible so that it could again

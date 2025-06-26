@@ -48,7 +48,7 @@ Every transition in the simulation needs generators that notice changes to state
 or events fired and create the appropriate transitions. Implement a `generators`
 function as part of the interface of each transition.
 """
-generators(::Type{SimEvent}) = EventGenerator[]
+generators(::Type{<:SimEvent}) = EventGenerator[]
 
 
 struct GeneratorSearch
@@ -60,13 +60,13 @@ end
 
 function over_generated_events(f::Function, generators, physical, event_key, changed_places)
     event_args = event_key[2:end]
-    for from_event in generators.event_to_event[event_key[1]]
+    for from_event in get(generators.event_to_event, event_key[1], Function[])
         from_event(f, physical, event_args...)
     end
     # Every place is (arrayname, integer index in array, struct member)
     for place in changed_places
         place_idx = place[2]
-        for genfunc in get(generators.byarray[place[1]], place[3], Function[])
+        for genfunc in get(get(generators.byarray, place[1], Dict{Symbol,Vector{Function}}()), place[3], Function[])
             genfunc(f, physical, place_idx)
         end
     end
