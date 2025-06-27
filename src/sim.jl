@@ -202,15 +202,13 @@ This function decides the rate of the transition, but whether the transition
 is enabled was already decided by the @condition in the macro. That same
 @condition will be used to disable the transition.
 """
-function enable(tn::MoveTransition, sampler, physical, when, rng)
-    enable!(sampler, clock_key(tn), Weibull(1.0), when, when, rng)
-    return nothing
+function enable(tn::MoveTransition, physical, when)
+    return (Weibull(1.0), when)
 end
 
-function reenable(tn::MoveTransition, sampler, physical, first_enabled, curtime, rng)
+function reenable(tn::MoveTransition, physical, first_enabled, curtime)
     @debug "Reenable $tn"
-    enable!(sampler, clock_key(tn), Weibull(1.0), first_enabled, curtime, rng)
-    return nothing
+    return (Weibull(1.0), first_enabled)
 end
 
 
@@ -299,15 +297,13 @@ function generators(::Type{InfectTransition})
     ]
 end
 
-function enable(tn::InfectTransition, sampler, physical, when, rng)
-    enable!(sampler, clock_key(tn), Exponential(1.0), when, when, rng)
-    return nothing
+function enable(tn::InfectTransition, physical, when)
+    return (Exponential(1.0), when)
 end
 
-function reenable(tn::InfectTransition, sampler, physical, firstenabled, curtime, rng)
+function reenable(tn::InfectTransition, physical, firstenabled, curtime)
     # For exponential distributions, we don't care when it was first enabled.
-    enable!(sampler, clock_key(tn), Exponential(1.0), curtime, curtime, rng)
-    return nothing
+    return (Exponential(1.0), curtime)
 end
 
 function fire!(it::InfectTransition, physical, when, rng)
