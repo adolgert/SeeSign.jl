@@ -215,7 +215,7 @@ end
 
 
 # Firing also transitions enabled -> disabled.
-function fire!(tn::MoveTransition, physical)
+function fire!(tn::MoveTransition, physical, when, rng)
     move_in_direction(physical, tn.who, tn.direction)
     return nothing
 end
@@ -310,7 +310,7 @@ function reenable(tn::InfectTransition, sampler, physical, firstenabled, curtime
     return nothing
 end
 
-function fire!(it::InfectTransition, physical)
+function fire!(it::InfectTransition, physical, when, rng)
     physical.agent[it.susceptible].health = Sick
 end
 

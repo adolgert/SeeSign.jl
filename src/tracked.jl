@@ -43,17 +43,21 @@ macro tracked_struct(typename, body)
     fieldnames = [field.args[1] for field in fields]
     fieldtypes = [field.args[2] for field in fields]
     
+    # Escape field definitions to evaluate in calling module context
+    escaped_fields = [Expr(:(::), esc(field.args[1]), esc(field.args[2])) for field in fields]
+    escaped_fieldnames = [esc(fname) for fname in fieldnames]
+    
     # Create the internal struct
     struct_def = quote
         mutable struct $(esc(typename))
-            $(fields...)
+            $(escaped_fields...)
             _container::Union{Nothing, Any}
             _index::Union{Nothing, Int}
             _gotten::Set{Symbol}
             _changed::Set{Symbol}
             
-            function $(esc(typename))($(map(esc, fieldnames)...))
-                return new($(map(esc, fieldnames)...), nothing, nothing, Set{Symbol}(), Set{Symbol}())
+            function $(esc(typename))($(escaped_fieldnames...))
+                return new($(escaped_fieldnames...), nothing, nothing, Set{Symbol}(), Set{Symbol}())
             end
         end
     end

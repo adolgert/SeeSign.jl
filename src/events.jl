@@ -1,6 +1,7 @@
 using Logging
 
 export SimEvent, InitializeEvent, clock_key, key_clock
+export precondition, enable, reenable, fire!
 
 """
   SimEvent
@@ -8,6 +9,11 @@ export SimEvent, InitializeEvent, clock_key, key_clock
 This abstract type is the parent of all transitions in the system.
 """
 abstract type SimEvent end
+
+function precondition(it::SimEvent, physical) end
+function enable(tn::SimEvent, sampler, physical, when, rng) end
+function reenable(tn::SimEvent, sampler, physical, firstenabled, curtime, rng) end
+function fire!(it::SimEvent, physical, when, rng) end
 
 """
 InitializeEvent is a concrete transition type that represents the first event
