@@ -2,6 +2,7 @@ module ReliabilitySim
 using SeeSign
 using CompetingClocks
 using SeeSign: ClockKey
+import SeeSign: generators, precondition, enable, reenable, fire!
 export run_reliability
 
 using Distributions
@@ -40,7 +41,7 @@ function IndividualState(actor_cnt, crew_size)
     for i in 1:actor_cnt
         actors[i] = Individual(ready, 0.0, 0.0)
     end
-    return IndividualState(actors, params, crew_size, 0.0)
+    return IndividualState(actors, params, crew_size, 8.0 / 24.0)
 end
 
 worker_cnt(physical::IndividualState) = length(physical.actors)
@@ -54,7 +55,7 @@ function generators(::Type{StartDay})
         EventGenerator(
             ToPlace,
             [:actors, ℤ, :state],
-            function last_fired(f::Function, physical)
+            function last_fired(f::Function, physical, args...)
                 f(StartDay())
             end
         )
@@ -62,7 +63,7 @@ function generators(::Type{StartDay})
 end
 
 function enable(evt::StartDay, sampler, physical, when, rng)
-    desired_time = floor(when) + physical.start_time
+    desired_time = floor(when) + 1.0 + physical.start_time
     interval = desired_time - when
     enable!(sampler, clock_key(evt), Dirac(interval), when, when, rng)
 end
@@ -74,7 +75,7 @@ function fire!(evt::StartDay, physical, when, rng)
             physical.actors[car].state = working
             physical.actors[car].started_working_time = when
             crew_cnt += 1
-            if crew_cnt == physical.crew_size
+            if crew_cnt == physical.workers_max
                 break
             end
         end
@@ -129,7 +130,8 @@ function generators(::Type{Break})
 end
 
 function enable(evt::Break, sampler, physical, when, rng)
-    started_ago = when - physical.params[evt.actor_idx].work_age
+    started_ago = when - physical.actors[evt.actor_idx].work_age
+    @debug "Break enable $(started_ago) $when"
     enable!(sampler, clock_key(evt), physical.params[evt.actor_idx].fail_dist, started_ago, when, rng)
 end
 
@@ -170,6 +172,7 @@ function initialize!(physical::PhysicalState, rng)
     for idx in eachindex(physical.actors)
         # This is a warm start to the problem.
         physical.actors[idx].work_age = rand(rng, Uniform(0, 10))
+        physical.actors[idx].state = ready
     end
 end
 

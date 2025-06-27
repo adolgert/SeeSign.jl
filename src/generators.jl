@@ -58,6 +58,19 @@ struct GeneratorSearch
 end
 
 
+function Base.show(io::IO, generators::GeneratorSearch)
+    by_event = [(sym, length(funcs)) for (sym, funcs) in generators.event_to_event]
+    println(io, "OnEvent: $(by_event)")
+    on_place = Tuple{Symbol,Symbol,Int}[]
+    for arrkey in keys(generators.byarray)
+        for propkey in keys(generators.byarray[arrkey])
+            push!(on_place, (arrkey, propkey, length(generators.byarray[arrkey][propkey])))
+        end
+    end
+    println(io, "OnPlace: $(on_place)")
+end
+
+
 function over_generated_events(f::Function, generators, physical, event_key, changed_places)
     event_args = event_key[2:end]
     for from_event in get(generators.event_to_event, event_key[1], Function[])

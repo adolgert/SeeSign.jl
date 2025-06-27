@@ -48,6 +48,7 @@ function SimulationFSM(physical, sampler::SSA{CK}, events, seed; observer=nothin
         end
         generator_searches[idx] = GeneratorSearch(generator_set)
     end
+    @debug generator_searches[1]
 
     if isnothing(observer)
         observer = (args...) -> nothing
@@ -122,50 +123,53 @@ function deal_with_changes(
     #       Disabled  create      nothing
     #
     # Sort for reproducibility run-to-run.
-    clock_toremove = CK[]
-    cond_affected = union((getplace(sim.depnet, cp).en for cp in changed_places)...)
-    rate_affected = union((getplace(sim.depnet, cp).ra for cp in changed_places)...)
+    @debug "Fired $(fired_event) changed $(changed_places)"
+    if !isempty(changed_places)
+        clock_toremove = CK[]
+        cond_affected = union((getplace(sim.depnet, cp).en for cp in changed_places)...)
+        rate_affected = union((getplace(sim.depnet, cp).ra for cp in changed_places)...)
 
-    for check_clock_key in sort(collect(cond_affected))
-        event = sim.enabled_events[check_clock_key]
-        reads_result = capture_state_reads(sim.physical) do
-            precondition(event, sim.physical)
-        end
-        cond_result = reads_result.result
-        cond_places = reads_result.reads
+        for check_clock_key in sort(collect(cond_affected))
+            event = sim.enabled_events[check_clock_key]
+            reads_result = capture_state_reads(sim.physical) do
+                precondition(event, sim.physical)
+            end
+            cond_result = reads_result.result
+            cond_places = reads_result.reads
 
-        if !cond_result
-            push!(clock_toremove, check_clock_key)
-        else
-            # Every time we check an invariant after a state change, we must
-            # re-calculate how it depends on the state. For instance,
-            # A can move right. Then A moves down. Then A can still move
-            # right, but its moving right now depends on a different space
-            # to the right. This is because a "move right" event is defined
-            # relative to a state, not on a specific set of places.
-            if cond_places != getplace(sim.depnet, check_clock_key).en
-                # Then you get new places.
-                rate_deps = rate_reenable(sim, event, check_clock_key)
-                add_event!(sim.depnet, check_clock_key, cond_places, rate_deps)
-                if check_clock_key in rate_affected
-                    delete!(rate_affected, check_clock_key)
+            if !cond_result
+                push!(clock_toremove, check_clock_key)
+            else
+                # Every time we check an invariant after a state change, we must
+                # re-calculate how it depends on the state. For instance,
+                # A can move right. Then A moves down. Then A can still move
+                # right, but its moving right now depends on a different space
+                # to the right. This is because a "move right" event is defined
+                # relative to a state, not on a specific set of places.
+                if cond_places != getplace(sim.depnet, check_clock_key).en
+                    # Then you get new places.
+                    rate_deps = rate_reenable(sim, event, check_clock_key)
+                    add_event!(sim.depnet, check_clock_key, cond_places, rate_deps)
+                    if check_clock_key in rate_affected
+                        delete!(rate_affected, check_clock_key)
+                    end
                 end
             end
         end
-    end
 
-    for rate_clock_key in sort(collect(rate_affected))
-        event = sim.enabled_events[rate_clock_key]
-        rate_deps = rate_reenable(sim, event, rate_clock_key)
-        cond_deps = getplace(sim.depnet, rate_clock_key).en
-        add_event!(sim.depnet, rate_clock_key, cond_deps, rate_deps)
-    end
+        for rate_clock_key in sort(collect(rate_affected))
+            event = sim.enabled_events[rate_clock_key]
+            rate_deps = rate_reenable(sim, event, rate_clock_key)
+            cond_deps = getplace(sim.depnet, rate_clock_key).en
+            add_event!(sim.depnet, rate_clock_key, cond_deps, rate_deps)
+        end
 
-    # Split the loop over changed_places so that the first part disables clocks
-    # and the second part creates new ones. We do this because two clocks
-    # can have the SAME key but DIFFERENT dependencies. For instance, "move left"
-    # will depend on different board places after the piece has moved.
-    disable_clocks!(sim, clock_toremove)
+        # Split the loop over changed_places so that the first part disables clocks
+        # and the second part creates new ones. We do this because two clocks
+        # can have the SAME key but DIFFERENT dependencies. For instance, "move left"
+        # will depend on different board places after the piece has moved.
+        disable_clocks!(sim, clock_toremove)
+    end
 
     process_generated_events_from_changes(sim, clock_key(fired_event), changed_places)
     accept(sim.physical)
@@ -206,10 +210,12 @@ end
 function fire!(sim::SimulationFSM, when, what)
     sim.when = when
     event = sim.enabled_events[what]
+    # Break the invariant that state and events are consistent.
     changed_places = modify_state!(sim, event)
     disable_clocks!(sim, [what])
-    sim.observer(sim.physical, when, event, changed_places)
     deal_with_changes(sim, event, changed_places)
+    # Invariant for states and events is restored, so show the result.
+    sim.observer(sim.physical, when, event, changed_places)
 end
 
 
