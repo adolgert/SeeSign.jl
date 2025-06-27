@@ -153,10 +153,7 @@ end
 ####### transitions
 abstract type BoardTransition <: SimEvent end
 
-struct MoveTransition <: BoardTransition
-    who::Int  # An agent index.
-    direction::Direction  # Direction that agent will move.
-end
+struct MoveTransition <: BoardTransition; who::Int; direction::Direction; end
 
 function precondition(mt::MoveTransition, physical)
     checkbounds(Bool, physical.agent, mt.who) || return false
@@ -173,7 +170,7 @@ function generators(::Type{MoveTransition})
             [:agent, ℤ, :loc],
             # An agent moved, and now there are new moves available to that agent.
             # The place we watch is the location of an agent.
-            function agent_moved_gen(f::Function, physical, agent_who)
+            function(f::Function, physical, agent_who)
                 agent_loc = physical.agent[agent_who].loc
                 for direction in valid_directions(physical.geom, agent_loc)
                     f(MoveTransition(agent_who, direction))
@@ -185,7 +182,7 @@ function generators(::Type{MoveTransition})
             [:board, ℤ, :occupant],
             # The neighbor of an agent got out of its way, so now the agent can move.
             # The place we watch is a board space that was previously occupied.
-            function neighbor_moved_gen(f::Function, physical, board_lin)
+            function(f::Function, physical, board_lin)
                 for beside in neighbors(physical.geom, board_lin)
                     reverse = direction_between(physical.geom, beside, board_lin)
                     f(MoveTransition(physical.board[beside].occupant, reverse))
