@@ -75,7 +75,11 @@ end
 function rate_reenable(sim::SimulationFSM, event, clock_key)
     first_enable = sim.enabling_times[clock_key]
     reads_result = capture_state_reads(sim.physical) do
-        reenable(event, sim.sampler, sim.physical, first_enable, sim.when, sim.rng)
+        distwhen = reenable(event, sim.physical, first_enable, sim.when)
+        if !isnothing(distwhen)
+            (dist, enable_time) = distwhen
+            enable!(sim.sampler, clock_key, dist, enable_time, sim.when, sim.rng)
+        end
     end
     return reads_result.reads
 end
@@ -95,7 +99,8 @@ function process_generated_events_from_changes(
                 sim.enabled_events[evtkey] = newevent
                 sim.enabling_times[evtkey] = sim.when
                 reads_result = capture_state_reads(sim.physical) do
-                    enable(newevent, sim.sampler, sim.physical, sim.when, sim.rng)
+                    (dist, enable_time) = enable(newevent, sim.physical, sim.when)
+                    enable!(sim.sampler, evtkey, dist, enable_time, sim.when, sim.rng)
                 end
                 rate_deps = reads_result.reads
                 @debug "Evtkey $(evtkey) with enable deps $(input_places) rate deps $(rate_deps)"

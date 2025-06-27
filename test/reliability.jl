@@ -62,10 +62,10 @@ function generators(::Type{StartDay})
     ]
 end
 
-function enable(evt::StartDay, sampler, physical, when, rng)
+function enable(evt::StartDay, physical, when)
     desired_time = floor(when) + 1.0 + physical.start_time
     interval = desired_time - when
-    enable!(sampler, clock_key(evt), Dirac(interval), when, when, rng)
+    return (Dirac(interval), when)
 end
 
 function fire!(evt::StartDay, physical, when, rng)
@@ -100,8 +100,8 @@ function generators(::Type{EndDay})
     ]
 end
 
-function enable(evt::EndDay, sampler, physical, when, rng)
-    enable!(sampler, clock_key(evt), physical.params[evt.actor_idx].done_dist, when, when, rng)
+function enable(evt::EndDay, physical, when)
+    return (physical.params[evt.actor_idx].done_dist, when)
 end
 
 function fire!(evt::EndDay, physical, when, rng)
@@ -129,10 +129,10 @@ function generators(::Type{Break})
     ]
 end
 
-function enable(evt::Break, sampler, physical, when, rng)
+function enable(evt::Break, physical, when)
     started_ago = when - physical.actors[evt.actor_idx].work_age
     @debug "Break enable $(started_ago) $when"
-    enable!(sampler, clock_key(evt), physical.params[evt.actor_idx].fail_dist, started_ago, when, rng)
+    return (physical.params[evt.actor_idx].fail_dist, started_ago)
 end
 
 function fire!(evt::Break, physical, when, rng)
@@ -159,8 +159,8 @@ function generators(::Type{Repair})
     ]
 end
 
-function enable(evt::Repair, sampler, physical, when, rng)
-    enable!(sampler, clock_key(evt), physical.params[evt.actor_idx].repair_dist, when, when, rng)
+function enable(evt::Repair, physical, when)
+    return (physical.params[evt.actor_idx].repair_dist, when)
 end
 
 function fire!(evt::Repair, physical, when, rng)

@@ -11,8 +11,8 @@ This abstract type is the parent of all transitions in the system.
 abstract type SimEvent end
 
 function precondition(it::SimEvent, physical) end
-function enable(tn::SimEvent, sampler, physical, when, rng) end
-function reenable(tn::SimEvent, sampler, physical, firstenabled, curtime, rng) end
+function enable(tn::SimEvent, physical, when) end
+function reenable(tn::SimEvent, physical, firstenabled, curtime) end
 function fire!(it::SimEvent, physical, when, rng) end
 
 """
