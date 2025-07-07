@@ -435,3 +435,35 @@ And what it does to the simulation code:
       physical.actors[evt.actor_idx].work_age = 0.0
   end
 ```
+
+## Event generation in particular
+
+This is a macro language to generate events. This one would create a function
+called `generators(::Type{MoveTransition})` that contains a list of EventGenerator
+objects.
+```
+@conditionsfor MoveTransition begin
+    @reactto changed(agent[i].loc) begin physical
+        agent_loc = physical.agent[i].loc
+        for direction in valid_directions(physical.geom, agent_loc)
+            generate(MoveTransition(agent_who, direction))
+        end
+    end
+    @reactto fired(InfectTransition(sick, healthy)) begin physical
+        for neigh in neighborsof(physical, healthy)
+            for nextneigh in neighborsof(physical, neigh)
+            generate(InfectTransition(neigh, nextneigh))
+        end
+    end
+end
+```
+The `@reactto changed(agent[i].loc)` creates a generator that reacts `ToPlace`
+where the search string is `[:agent, ℤ, :loc]`. Then it makes a function closure
+with the arguments `(generate::Function, physical, i)` where the value passed
+to `i` is the `ℤ` match.
+
+The `@reactto fired(InfectTransition(sick, healthy))` creates a generator that
+reacts `ToEvent` where the search string is `[:InfectTransition]` and the function
+closure has the arguments `(generate::Function, physical, sick, healthy)`.
+The values for sick and health are taken from the matched event.
+
