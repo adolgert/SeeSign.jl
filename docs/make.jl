@@ -1,6 +1,10 @@
 using SeeSign
 using Documenter
 using Literate
+using DocumenterMermaid
+
+# If you want to see this in LiveServer instead of on disk use:
+# julia --project=docs -e 'using LiveServer; serve(dir="docs/build")'
 
 DocMeta.setdocmeta!(SeeSign, :DocTestSetup, :(using SeeSign); recursive=true)
 
@@ -62,7 +66,7 @@ makedocs(;
         prettyurls=get(ENV, "CI", nothing) == "true",
         canonical="https://adolgert.github.io/SeeSign.jl",
         edit_link="main",
-        assets=String[],
+        assets=["assets/mermaid-config.js"],
     ),
     pages=[
         "Home" => "index.md",
@@ -72,6 +76,7 @@ makedocs(;
         "Development" => [
             "Plan" => "plan.md",
             "Event Updates" => "event_update.md",
+            "Architecture" => "architecture_diagram.md",
         ],
         "Reference" => "reference.md",
     ],
