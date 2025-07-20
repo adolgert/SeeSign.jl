@@ -50,16 +50,10 @@ struct StartDay <: SimEvent end
 
 precondition(event::StartDay, physical) = true
 
-function generators(::Type{StartDay})
-    return [
-        EventGenerator(
-            ToPlace,
-            [:actors, ℤ, :state],
-            function last_fired(f::Function, physical, args...)
-                f(StartDay())
-            end
-        )
-    ]
+@conditionsfor StartDay begin
+    @reactto changed(actors[i].state) begin physical
+        generate(StartDay())
+    end
 end
 
 function enable(evt::StartDay, physical, when)
@@ -88,16 +82,10 @@ end
 
 precondition(evt::EndDay, physical) = physical.actors[evt.actor_idx].state == working
 
-function generators(::Type{EndDay})
-    return [
-        EventGenerator(
-            ToPlace,
-            [:actors,  ℤ, :state],
-            function started_working(f::Function, physical, actor)
-                f(EndDay(actor))
-            end
-        )
-    ]
+@conditionsfor EndDay begin
+    @reactto changed(actors[actor].state) begin physical
+        generate(EndDay(actor))
+    end
 end
 
 function enable(evt::EndDay, physical, when)
@@ -117,16 +105,10 @@ end
 
 precondition(evt::Break, physical) = physical.actors[evt.actor_idx].state == working
 
-function generators(::Type{Break})
-    return [
-        EventGenerator(
-            ToPlace,
-            [:actors,  ℤ, :state],
-            function started_working(f::Function, physical, actor)
-                f(Break(actor))
-            end
-        )
-    ]
+@conditionsfor Break begin
+    @reactto changed(actors[actor].state) begin physical
+        generate(Break(actor))
+    end
 end
 
 function enable(evt::Break, physical, when)
@@ -147,16 +129,10 @@ end
 
 precondition(evt::Repair, physical) = physical.actors[evt.actor_idx].state == broken
 
-function generators(::Type{Repair})
-    return [
-        EventGenerator(
-            ToPlace,
-            [:actors,  ℤ, :state],
-            function started_working(f::Function, physical, actor)
-                f(Repair(actor))
-            end
-        )
-    ]
+@conditionsfor Repair begin
+    @reactto changed(actors[actor].state) begin physical
+        generate(Repair(actor))
+    end
 end
 
 function enable(evt::Repair, physical, when)
